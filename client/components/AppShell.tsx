@@ -1,3 +1,4 @@
+import { OPENCOI_VERSION } from "@shared/version";
 import {
   Activity,
   Building2,
@@ -239,7 +240,7 @@ export function AppShell({ children, actions }: { children: ReactNode; actions?:
         <div className="sidebar__footer">
           <a href="https://github.com/ajayasai/opencoi" target="_blank" rel="noreferrer">
             Open-source project
-            <span>v0.2.0</span>
+            <span>v{OPENCOI_VERSION}</span>
           </a>
         </div>
       </aside>

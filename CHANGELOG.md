@@ -8,6 +8,13 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 
 - Follow the evidence-driven priorities in the [roadmap](ROADMAP.md); entries here are not delivery commitments.
 
+## [0.2.2] - 2026-08-31
+
+### Fixed
+
+- Centralized the version shown by the health endpoint and application shell,
+  and added a release gate that requires it to match `package.json`.
+
 ## [0.2.1] - 2026-08-31
 
 ### Fixed

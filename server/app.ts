@@ -4,6 +4,7 @@ import compression from "compression";
 import express, { type Express } from "express";
 import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
+import { OPENCOI_VERSION } from "../shared/version.js";
 import { type OidcProtocol, OpenIdClientProtocol } from "./auth/oidc.js";
 import type { AppConfig } from "./config.js";
 import type { OpenCoiDatabase } from "./db.js";
@@ -81,7 +82,7 @@ export const createApp = (options: CreateAppOptions): Express => {
     response.json({
       data: {
         status: database.ok === 1 ? "ok" : "degraded",
-        version: "0.2.0",
+        version: OPENCOI_VERSION,
       },
     });
   });
