@@ -1,6 +1,6 @@
 # Architecture
 
-OpenCOI v0.3 keeps a deliberately understandable single-node data plane: a React browser client, Node.js/Express, SQLite, and local document storage. It includes a versioned service API plus independently runnable webhook and certificate-request workers, while continuing to favor inspectable document decisions and operational simplicity over live insurance-system connectivity or unsupported horizontal-scale claims.
+OpenCOI v0.4 keeps a deliberately understandable single-node data plane: a React browser client, Node.js/Express, SQLite, and local document storage. It includes a versioned service API plus independently runnable webhook and certificate-request workers, while continuing to favor inspectable document decisions and operational simplicity over live insurance-system connectivity or unsupported horizontal-scale claims.
 
 The system's output is always scoped to an uploaded document. No component contacts an insurer, broker, carrier, or agency-management system to establish current policy status.
 
@@ -105,7 +105,7 @@ The standard container mounts both at `/app/data`. See [BACKUP_RESTORE.md](BACKU
 
 Publishing a requirement profile creates a numbered JSON snapshot and updates the active projection used for new evaluations. A certificate stores the version and evaluation date used, while its findings preserve the resulting expected and observed values and reason codes.
 
-v0.3 exposes the current profile editor and historical result context, but not an arbitrary replay or migration console. A requirement edit does not silently recompute prior stored findings.
+v0.4 exposes the current profile editor and historical result context, but not an arbitrary replay or evaluation console. A requirement edit does not silently recompute prior stored findings. Database schema upgrades use a separate checksummed migration catalog and CLI.
 
 ## Reminder execution
 
@@ -129,7 +129,7 @@ A tracked request owns one single-use upload link. Manual delivery reveals the l
 
 ## Signed evidence bundles
 
-An authorized user can export one certificate assessment as versioned JSON. The payload includes the source-document SHA-256, immutable extraction proposal, confirmed facts, evidence citations, exact requirement snapshot, findings, exceptions, bounded status language, and an audit-chain checkpoint. OpenCOI signs the canonical unsigned payload with an organization-specific Ed25519 key whose private material is encrypted using deployment key material. The embedded public key proves integrity, not organization identity; identity-sensitive consumers must obtain and compare the fingerprint through a separately trusted channel. The [published schema and verifier](EVIDENCE_BUNDLES.md) are part of the portability boundary.
+An authorized user can export one certificate assessment as versioned JSON. The payload includes the source-document SHA-256, immutable extraction proposal, confirmed facts, extraction citations, reviewer-confirmed endorsement page attestations, exact requirement snapshot, findings, exceptions, bounded status language, and an audit-chain checkpoint. Each endorsement attestation repeats the source-document digest and carries its canonical one-based page list, so both the claimed pages and document identity are covered by the bundle signature. OpenCOI signs the canonical unsigned payload with an organization-specific Ed25519 key whose private material is encrypted using deployment key material. The embedded public key proves integrity, not organization identity; identity-sensitive consumers must obtain and compare the fingerprint through a separately trusted channel. The [published schema and verifier](EVIDENCE_BUNDLES.md) are part of the portability boundary.
 
 ## Authentication and authorization
 
@@ -156,10 +156,11 @@ OpenCOI does not enforce an identity provider's MFA policy and does not include 
 Every uploaded file is untrusted. Before storage, the server:
 
 - enforces the configured byte-size limit;
+- admits at most two simultaneous multipart certificate uploads per application process before buffering;
 - requires a PDF signature at byte zero instead of trusting the filename or MIME claim;
 - rejects encrypted files;
 - rejects common JavaScript, launch action, embedded-file, rich-media, and XFA markers;
-- rejects an estimated page count above 75; and
+- rejects an early estimated page count above 75, compares independent PDF.js and PDF-lib page-tree traversals before storage, rejects disagreement or an actual count above 75, and persists that trusted count for endorsement-page validation; and
 - stores the file under a generated, path-constrained key.
 
 These are conservative intake checks, not a complete parser sandbox, malware scanner, or content disarm/reconstruction system. Internet-facing operators should isolate the service and add scanning controls based on [THREAT_MODEL.md](THREAT_MODEL.md).
@@ -179,7 +180,7 @@ separate process or optional Compose-profile service.
 
 ## Deployment topology and scale
 
-The supported bundled v0.3 topology is one application process or container, optional external job workers, and one persistent data directory. Do not run multiple web replicas against the same SQLite database or document directory.
+The supported bundled v0.4 topology is one application process or container, optional external job workers, and one persistent data directory. Do not run multiple web replicas against the same SQLite database or document directory.
 
 This boundary keeps deployment and backup comprehensible, but it also means:
 
@@ -208,7 +209,7 @@ The Compose service runs without Linux capabilities, as a non-root user, with a 
 - Server-generated compliance CSV neutralizes attacker-controlled cells before spreadsheet interpretation.
 - Audit verification recomputes the event hash chain and exposes inconsistency; it does not make a compromised host trustworthy.
 
-## Explicit non-goals for v0.3
+## Explicit non-goals for v0.4
 
 - live insurer, carrier, broker, or agency-management-system monitoring;
 - policy cancellation or reinstatement feeds;

@@ -1,6 +1,5 @@
 import { Code2, ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { api } from "../api";
 import { Callout, PageLoader } from "../components/ui";
 import type { PublicUploadContext } from "../types";
@@ -8,7 +7,16 @@ import { DocumentIntake, type IntakeSubmission } from "./DocumentIntake";
 import "./review.css";
 
 export function PublicUploadPage() {
-  const { token = "" } = useParams();
+  const [token] = useState(
+    () => new URLSearchParams(window.location.hash.slice(1)).get("token") ?? "",
+  );
+  useLayoutEffect(() => {
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${window.location.search}`,
+    );
+  }, []);
   const [context, setContext] = useState<PublicUploadContext | null>(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<{
@@ -18,6 +26,10 @@ export function PublicUploadPage() {
   } | null>(null);
 
   useEffect(() => {
+    if (!token) {
+      setError("This upload link is invalid, expired, or has been revoked.");
+      return;
+    }
     api
       .publicUploadContext(token)
       .then(setContext)

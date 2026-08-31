@@ -43,6 +43,35 @@ export interface AuditChainVerification {
   sequenceNumber?: number;
 }
 
+type AuditActorRow = Pick<AuditEventRow, "actor_type" | "actor_user_id" | "metadata_json">;
+
+export const parseAuditMetadata = (metadataJson: string): Record<string, unknown> => {
+  try {
+    const parsed = JSON.parse(metadataJson) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+};
+
+/** Build the actor label shown in audit and activity views without losing API attribution. */
+export const auditActorLabel = (
+  row: AuditActorRow,
+  names: { userName?: string; serviceAccountName?: string } = {},
+): string => {
+  if (row.actor_user_id) return names.userName ?? `User ${row.actor_user_id}`;
+  if (row.actor_type === "vendor") return "Vendor uploader";
+  const serviceAccountId = parseAuditMetadata(row.metadata_json).serviceAccountId;
+  if (typeof serviceAccountId === "string" && serviceAccountId.length > 0) {
+    return names.serviceAccountName
+      ? `Service account: ${names.serviceAccountName}`
+      : `Service account ${serviceAccountId}`;
+  }
+  return "OpenCOI";
+};
+
 type JsonPrimitive = string | number | boolean | null;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 

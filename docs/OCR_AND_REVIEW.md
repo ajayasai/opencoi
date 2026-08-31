@@ -33,7 +33,7 @@ For each page, PDF.js reconstructs lines from text items. A page with at least 8
 
 A page below the usable-text threshold is rendered at 1.65× scale and passed to an English Tesseract worker. Progress is shown per page. OCR confidence is retained as a proposal hint only.
 
-To bound browser resource use, v0.3 OCR-processes at most the first 20 scanned pages. Additional pages remain available in the document but require manual transcription and confirmation.
+To bound browser resource use, v0.4 OCR-processes at most the first 20 scanned pages. Additional pages remain available in the document but require manual transcription and confirmation.
 
 ### 4. Heuristic field proposals
 
@@ -65,9 +65,9 @@ An administrator or reviewer creates an expiring vendor-specific bearer link. Th
 
 The server forces every public-link submission to `UNCONFIRMED`, even if a modified client claims otherwise. It consumes the allowed link use, stores the submission, and places it in the review queue. An authenticated reviewer opens the original and extracted facts, gives an explicit attestation, and confirms the revision. The server evaluates it against the requirement profile current at confirmation time and records that version and evaluation date.
 
-Treat the URL as a secret. Anyone with an active unused link can submit a document for that vendor.
+Treat the URL as a secret. New links place the bearer in a browser fragment, remove it from browser history on load, and use a fixed API path with an authorization header so ordinary request-target logs do not contain it. Anyone who obtains the active unused bearer can still submit a document for that vendor.
 
-## Fields in the v0.3 review form
+## Fields in the review form
 
 The review workspace supports:
 
@@ -76,18 +76,20 @@ The review workspace supports:
 - insurer, policy number, effective date, and expiration date;
 - each-occurrence/claim and aggregate amounts in major currency units; and
 - explicit evidence levels for additional insured, waiver of subrogation, and primary/non-contributory; and
-- arbitrary named or form-coded endorsements included in the PDF package.
+- arbitrary named or form-coded endorsements included in the PDF package; and
+- exact, one-based PDF source pages for every endorsement record.
 
-Blank values remain absent. They are not converted to zero. The reviewer chooses among no evidence, a certificate mention, an endorsement included in the PDF package, and an attached endorsement personally reviewed. A certificate indication is never automatically promoted to attached or human-verified evidence.
+Blank values remain absent. They are not converted to zero. The reviewer chooses among no evidence, a certificate mention, an endorsement included in the PDF package, and an attached endorsement personally reviewed. New `ATTACHED` and `HUMAN_VERIFIED` records require at least one source page. Page lists are stored as unique ascending integers and must fit both the submitted extraction metadata and a page count parsed independently from the source PDF by the trusted storage boundary. A certificate indication is never automatically promoted to attached or human-verified evidence, and OCR never supplies a reviewer page attestation. Legacy pending records without a trusted page count cannot be confirmed with strong endorsement evidence; the document must be resubmitted or the evidence downgraded.
 
-The underlying metadata and rule model represent more coverage and limit types than the v0.3 form exposes. Unusual documents still require careful manual mapping and should remain `UNKNOWN` or `FAIL` when the reviewer cannot establish the required evidence level.
+The underlying metadata and rule model represent more coverage and limit types than the v0.4 form exposes. Unusual documents still require careful manual mapping and should remain `UNKNOWN` or `FAIL` when the reviewer cannot establish the required evidence level.
 
 ## Extraction and server limits
 
-| Boundary | v0.3 behavior |
+| Boundary | v0.4 behavior |
 | --- | --- |
-| Upload size | 15 MiB by default; server-configurable from 1 through 100 MiB. The browser form currently enforces 15 MiB. |
-| Stored PDF page safety limit | 75 pages, based on conservative byte-level page-marker inspection. |
+| Upload size | 15 MiB by default; server-configurable from 1 through 25 MiB. The browser form currently enforces 15 MiB. |
+| Concurrent multipart intake | At most two certificate uploads are parsed simultaneously per application process; excess requests receive `503` with `Retry-After`. |
+| Stored PDF page safety limit | 75 pages. A byte-level marker count provides an early rejection, then independent PDF.js and PDF-lib parsers must agree on the traversed page tree before storage; strong endorsement pages are bounded to that trusted count. |
 | OCR page limit | First 20 pages that need OCR. Digital text-layer pages are still read across the PDF. |
 | OCR language | English (`eng`). |
 | Digital-text threshold | 80 usable characters per page before OCR fallback. |
@@ -106,7 +108,7 @@ Before storing a PDF, the server:
 - computes SHA-256 and stores the byte size;
 - rejects encrypted PDFs;
 - rejects markers for JavaScript, JavaScript actions, launch actions, embedded files, rich media, and XFA forms;
-- rejects the page estimate above 75; and
+- rejects the page estimate above 75, parser disagreement, or an independently traversed page tree above 75; and
 - writes through a server-generated UUID path with owner-only permissions.
 
 The original filename is sanitized only for download presentation and never used as a storage path.
@@ -121,12 +123,13 @@ The standard deployment retains:
 - its generated storage key, size, and SHA-256;
 - raw extracted text and per-page extraction metadata;
 - the edited structured facts;
+- endorsement source-page references and their confirmation state;
 - review and upload actors and timestamps;
 - requirement version and evaluation date;
 - persisted findings and exception links; and
 - related audit events.
 
-These records can contain personal and commercially sensitive information. Operators must define retention, access, backup, deletion, and incident-response practices. The v0.3 UI does not provide a complete retention-policy engine.
+These records can contain personal and commercially sensitive information. Operators must define retention, access, backup, deletion, and incident-response practices. The v0.4 UI does not provide a complete retention-policy engine.
 
 ## Review checklist
 
@@ -136,7 +139,7 @@ Before confirming a document, a reviewer should verify at least:
 2. each coverage classification and its insurer and policy number;
 3. effective and expiration dates, including transposed month/day values;
 4. every monetary amount and its basis, not just the largest number on the page;
-5. whether an item is merely indicated on the certificate or supported by an attached endorsement;
+5. whether an item is merely indicated on the certificate or supported by an attached endorsement, and whether every recorded source page opens to the claimed evidence;
 6. the certificate holder and any relevant form number; and
 7. parser warnings, blank fields, duplicate policy rows, and unexpected pages.
 

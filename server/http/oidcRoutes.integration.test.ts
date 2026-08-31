@@ -29,7 +29,7 @@ class MemoryDocumentStore implements DocumentStore {
       sha256: createHash("sha256").update(bytes).digest("hex"),
       sizeBytes: bytes.byteLength,
       detectedMime: "application/pdf",
-      pageCountEstimate: inspection.pageCountEstimate,
+      pageCount: inspection.pageCountEstimate,
     };
   }
 

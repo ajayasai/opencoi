@@ -1,11 +1,7 @@
 import type { OpenCoiDatabase } from "../db.js";
 
-/**
- * Additive schema for machine-to-machine access and durable integrations.
- * Keeping it additive lets existing self-hosted installations upgrade in place.
- */
-export const ensureIntegrationSchema = (database: OpenCoiDatabase): void => {
-  database.exec(`
+/** Immutable checksum material for the integration schema v1 migration. */
+export const INTEGRATION_SCHEMA_V1_SQL = `
     CREATE TABLE IF NOT EXISTS service_accounts (
       id TEXT PRIMARY KEY,
       organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
@@ -141,16 +137,26 @@ export const ensureIntegrationSchema = (database: OpenCoiDatabase): void => {
     BEGIN
       SELECT RAISE(ABORT, 'domain events are append-only');
     END;
-  `);
+`;
+
+/** Immutable checksum material for the idempotency replay-header upgrade. */
+export const IDEMPOTENCY_RESPONSE_HEADERS_MIGRATION_SQL = `
+  ALTER TABLE api_idempotency_keys
+    ADD COLUMN response_headers_json TEXT NOT NULL DEFAULT '{}'
+      CHECK (json_valid(response_headers_json));
+`;
+
+/**
+ * Additive schema for machine-to-machine access and durable integrations.
+ * Keeping it additive lets existing self-hosted installations upgrade in place.
+ */
+export const ensureIntegrationSchema = (database: OpenCoiDatabase): void => {
+  database.exec(INTEGRATION_SCHEMA_V1_SQL);
 
   const idempotencyColumns = database
     .prepare("PRAGMA table_info(api_idempotency_keys)")
     .all() as Array<{ name: string }>;
   if (!idempotencyColumns.some((column) => column.name === "response_headers_json")) {
-    database.exec(`
-      ALTER TABLE api_idempotency_keys
-        ADD COLUMN response_headers_json TEXT NOT NULL DEFAULT '{}'
-          CHECK (json_valid(response_headers_json));
-    `);
+    database.exec(IDEMPOTENCY_RESPONSE_HEADERS_MIGRATION_SQL);
   }
 };

@@ -1,264 +1,4097 @@
-openapi: 3.1.0
-info:
-  title: OpenCOI API
-  version: 2026-08-31
-  description: >-
-    Tenant-isolated API for vendors, configured requirements, uploaded-document
-    compliance results, and ordered domain events. It does not verify live policy status.
-  license:
-    name: AGPL-3.0-only
-    identifier: AGPL-3.0-only
-servers:
-  - url: /api/v1
-security:
-  - bearerAuth: []
-paths:
-  /vendors:
-    get:
-      operationId: listVendors
-      summary: List vendors
-      parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-        - name: status
-          in: query
-          schema: { $ref: '#/components/schemas/VendorStatus' }
-      responses:
-        '200':
-          description: Cursor page
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [data, meta]
-                properties:
-                  data: { type: array, items: { $ref: '#/components/schemas/Vendor' } }
-                  meta: { $ref: '#/components/schemas/PageMeta' }
-        '401': { $ref: '#/components/responses/Problem' }
-        '403': { $ref: '#/components/responses/Problem' }
-    post:
-      operationId: createVendor
-      summary: Create a vendor
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/VendorInput' }
-      responses:
-        '201':
-          description: Created
-          headers:
-            ETag: { schema: { type: string } }
-            Location: { schema: { type: string } }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/VendorEnvelope' }
-        '400': { $ref: '#/components/responses/Problem' }
-        '409': { $ref: '#/components/responses/Problem' }
-  /vendors/{vendorId}:
-    parameters:
-      - $ref: '#/components/parameters/VendorId'
-    get:
-      operationId: getVendor
-      summary: Get a vendor
-      responses:
-        '200':
-          description: Vendor
-          headers:
-            ETag: { schema: { type: string } }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/VendorEnvelope' }
-        '404': { $ref: '#/components/responses/Problem' }
-    patch:
-      operationId: updateVendor
-      summary: Update a vendor with optimistic concurrency
-      parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
-        - name: If-Match
-          in: header
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/VendorPatch'
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/VendorEnvelope' }
-        '412': { $ref: '#/components/responses/Problem' }
-        '428': { $ref: '#/components/responses/Problem' }
-  /vendors/{vendorId}/compliance:
-    get:
-      operationId: getVendorCompliance
-      summary: Get the latest uploaded-document compliance result
-      parameters:
-        - $ref: '#/components/parameters/VendorId'
-      responses:
-        '200':
-          description: Document-scoped result, findings, and policy facts
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        '404': { $ref: '#/components/responses/Problem' }
-  /vendor-types:
-    get:
-      operationId: listVendorTypes
-      summary: List vendor types and active configured requirements
-      responses:
-        '200':
-          description: Vendor types
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  /events:
-    get:
-      operationId: listEvents
-      summary: Read the ordered domain-event feed
-      parameters:
-        - $ref: '#/components/parameters/Limit'
-        - $ref: '#/components/parameters/Cursor'
-      responses:
-        '200':
-          description: Ordered event page
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [data, meta]
-                properties:
-                  data: { type: array, items: { $ref: '#/components/schemas/DomainEvent' } }
-                  meta: { $ref: '#/components/schemas/PageMeta' }
-components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: ocoi_sk_…
-  parameters:
-    VendorId:
-      name: vendorId
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    Limit:
-      name: limit
-      in: query
-      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
-    Cursor:
-      name: cursor
-      in: query
-      schema: { type: string, maxLength: 1024 }
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      schema: { type: string, minLength: 8, maxLength: 128 }
-  responses:
-    Problem:
-      description: RFC 9457 Problem Details
-      content:
-        application/problem+json:
-          schema: { $ref: '#/components/schemas/Problem' }
-  schemas:
-    VendorStatus:
-      type: string
-      enum: [active, inactive, archived]
-    VendorInput:
-      type: object
-      additionalProperties: false
-      required: [vendorTypeId, legalName]
-      properties:
-        vendorTypeId: { type: string }
-        legalName: { type: string, minLength: 1, maxLength: 240 }
-        tradeName: { type: [string, 'null'], maxLength: 240 }
-        contactName: { type: [string, 'null'], maxLength: 200 }
-        contactEmail: { type: [string, 'null'], format: email, maxLength: 320 }
-        contactPhone: { type: [string, 'null'], maxLength: 80 }
-        externalReference: { type: [string, 'null'], maxLength: 200 }
-        notes: { type: [string, 'null'], maxLength: 5000 }
-    Vendor:
-      type: object
-      required: [id, vendorType, legalName, contact, status, latestCertificate, createdAt, updatedAt]
-      properties:
-        id: { type: string, format: uuid }
-        vendorType:
-          type: object
-          required: [id, name]
-          properties:
-            id: { type: string }
-            name: { type: string }
-        legalName: { type: string }
-        tradeName: { type: [string, 'null'] }
-        contact:
-          type: object
-          required: [name, email, phone]
-          properties:
-            name: { type: [string, 'null'] }
-            email: { type: [string, 'null'] }
-            phone: { type: [string, 'null'] }
-        externalReference: { type: [string, 'null'] }
-        status: { $ref: '#/components/schemas/VendorStatus' }
-        notes: { type: [string, 'null'] }
-        latestCertificate: { type: [object, 'null'], additionalProperties: true }
-        createdAt: { type: string, format: date-time }
-        updatedAt: { type: string, format: date-time }
-    VendorPatch:
-      type: object
-      additionalProperties: false
-      minProperties: 1
-      properties:
-        vendorTypeId: { type: string }
-        legalName: { type: string, minLength: 1, maxLength: 240 }
-        tradeName: { type: [string, 'null'], maxLength: 240 }
-        contactName: { type: [string, 'null'], maxLength: 200 }
-        contactEmail: { type: [string, 'null'], format: email, maxLength: 320 }
-        contactPhone: { type: [string, 'null'], maxLength: 80 }
-        externalReference: { type: [string, 'null'], maxLength: 200 }
-        notes: { type: [string, 'null'], maxLength: 5000 }
-        status: { $ref: '#/components/schemas/VendorStatus' }
-    VendorEnvelope:
-      type: object
-      required: [data]
-      properties:
-        data: { $ref: '#/components/schemas/Vendor' }
-    DomainEvent:
-      type: object
-      required: [id, sequence, type, occurredAt, resource, data]
-      properties:
-        id: { type: string, format: uuid }
-        sequence: { type: integer, minimum: 1 }
-        type: { type: string }
-        occurredAt: { type: string, format: date-time }
-        resource:
-          type: object
-          required: [type, id]
-          properties:
-            type: { type: string }
-            id: { type: [string, 'null'] }
-        data: {}
-    PageMeta:
-      type: object
-      required: [limit, hasMore, nextCursor]
-      properties:
-        limit: { type: integer }
-        hasMore: { type: boolean }
-        nextCursor: { type: [string, 'null'] }
-    Problem:
-      type: object
-      required: [type, title, status, detail, instance, requestId]
-      properties:
-        type: { type: string }
-        title: { type: string }
-        status: { type: integer }
-        detail: { type: string }
-        instance: { type: string }
-        requestId: { type: string, format: uuid }
-        errors: {}
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "OpenCOI API",
+    "version": "2026-09-01",
+    "description": "Tenant-isolated API for vendor, requirements, compliance, and event automation.",
+    "license": {
+      "name": "AGPL-3.0-only",
+      "identifier": "AGPL-3.0-only"
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "paths": {
+    "/vendors": {
+      "get": {
+        "summary": "List vendors",
+        "operationId": "listVendors",
+        "tags": [
+          "Vendors"
+        ],
+        "x-required-scope": "vendors:read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "inactive",
+                "archived"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cursor page of vendors",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a vendor",
+        "operationId": "createVendor",
+        "tags": [
+          "Vendors"
+        ],
+        "x-required-scope": "vendors:write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VendorInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Non-sensitive vendor creation receipt",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorMutationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/vendors/{vendorId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/VendorId"
+        }
+      ],
+      "get": {
+        "summary": "Get a vendor",
+        "operationId": "getVendor",
+        "tags": [
+          "Vendors"
+        ],
+        "x-required-scope": "vendors:read",
+        "responses": {
+          "200": {
+            "description": "Vendor and ETag",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update a vendor",
+        "operationId": "updateVendor",
+        "tags": [
+          "Vendors"
+        ],
+        "x-required-scope": "vendors:write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VendorPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Non-sensitive vendor update receipt and current ETag",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorMutationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/vendors/{vendorId}/compliance": {
+      "get": {
+        "summary": "Get the latest document compliance result",
+        "operationId": "getVendorCompliance",
+        "tags": [
+          "Compliance"
+        ],
+        "x-required-scope": "compliance:read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/VendorId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Uploaded-document compliance result",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplianceEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/vendors/{vendorId}/certificates": {
+      "post": {
+        "summary": "Submit a certificate for human review",
+        "description": "Uploads a PDF and extraction proposal. Service-account submissions are always unconfirmed and cannot satisfy a configured rule until an authorized person reviews them.",
+        "operationId": "submitCertificate",
+        "tags": [
+          "Certificates"
+        ],
+        "x-required-scope": "certificates:write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/VendorId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "document"
+                ],
+                "properties": {
+                  "document": {
+                    "type": "string",
+                    "format": "binary"
+                  },
+                  "metadata": {
+                    "type": "string",
+                    "contentMediaType": "application/json",
+                    "contentSchema": {
+                      "$ref": "#/components/schemas/CertificateSubmissionMetadata"
+                    },
+                    "description": "JSON object using the browser extraction metadata contract."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Non-sensitive certificate submission receipt",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              },
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateSubmissionEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/UploadCapacityProblem"
+          }
+        }
+      }
+    },
+    "/certificates/{certificateId}": {
+      "get": {
+        "summary": "Get a certificate assessment",
+        "operationId": "getCertificate",
+        "tags": [
+          "Certificates"
+        ],
+        "x-required-scope": "certificates:read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CertificateId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Certificate facts, evidence, findings, and document-scoped status",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/certificates/{certificateId}/evidence-bundle": {
+      "get": {
+        "summary": "Export a signed evidence bundle",
+        "description": "Returns an Ed25519-signed portable record of the document assessment. It does not assert live policy status.",
+        "operationId": "exportEvidenceBundle",
+        "tags": [
+          "Evidence"
+        ],
+        "x-required-scope": "evidence:read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CertificateId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Signed evidence bundle",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              },
+              "Content-Disposition": {
+                "description": "Attachment filename containing the certificate ID.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceBundle"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/vendors/{vendorId}/certificate-requests": {
+      "get": {
+        "summary": "List tracked certificate requests for a vendor",
+        "operationId": "listCertificateRequests",
+        "tags": [
+          "Certificate requests"
+        ],
+        "x-required-scope": "requests:read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/VendorId"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tracked requests",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateRequestPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "post": {
+        "summary": "Create a tracked initial or renewal request",
+        "description": "Requires requests:write. Supplying sourceCertificateId additionally requires certificates:read so the caller cannot use renewal creation as a certificate-existence oracle.",
+        "operationId": "createCertificateRequest",
+        "tags": [
+          "Certificate requests"
+        ],
+        "x-required-scope": "requests:write",
+        "x-conditional-scopes": {
+          "sourceCertificateId": "certificates:read"
+        },
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/VendorId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CertificateRequestInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tracked request created; manual upload URLs contain a bearer secret",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              },
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateRequestCreateEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/certificate-requests/{requestId}": {
+      "get": {
+        "summary": "Get a tracked certificate request",
+        "operationId": "getCertificateRequest",
+        "tags": [
+          "Certificate requests"
+        ],
+        "x-required-scope": "requests:read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tracked request",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateRequestEnvelope"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/certificate-requests/{requestId}/cancel": {
+      "post": {
+        "summary": "Cancel an open tracked certificate request",
+        "operationId": "cancelCertificateRequest",
+        "tags": [
+          "Certificate requests"
+        ],
+        "x-required-scope": "requests:write",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/RequestId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Non-sensitive cancellation receipt",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              },
+              "Idempotent-Replayed": {
+                "$ref": "#/components/headers/IdempotentReplayed"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CertificateRequestCancellationEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/vendor-types": {
+      "get": {
+        "summary": "List vendor types and active requirements",
+        "operationId": "listVendorTypes",
+        "tags": [
+          "Requirements"
+        ],
+        "x-required-scope": "requirements:read",
+        "responses": {
+          "200": {
+            "description": "Vendor types and rules",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VendorTypePage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "summary": "Read the ordered domain-event feed",
+        "operationId": "listEvents",
+        "tags": [
+          "Events"
+        ],
+        "x-required-scope": "events:read",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ordered event page",
+            "headers": {
+              "X-Request-ID": {
+                "$ref": "#/components/headers/XRequestId"
+              },
+              "OpenCOI-Version": {
+                "$ref": "#/components/headers/OpenCoiVersion"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "ocoi_sk_…"
+      }
+    },
+    "parameters": {
+      "VendorId": {
+        "name": "vendorId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "CertificateId": {
+        "name": "certificateId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "RequestId": {
+        "name": "requestId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._:-]{8,128}$"
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 50
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "schema": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      }
+    },
+    "headers": {
+      "XRequestId": {
+        "description": "Stable request correlation UUID.",
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "OpenCoiVersion": {
+        "description": "Date-based revision of the /api/v1 contract.",
+        "schema": {
+          "type": "string",
+          "const": "2026-09-01"
+        }
+      },
+      "IdempotentReplayed": {
+        "description": "Present with value true only when a stored response was replayed.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "true"
+          ]
+        }
+      },
+      "ETag": {
+        "description": "Strong entity tag for vendor optimistic concurrency.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "Location": {
+        "description": "Relative URL of the created resource.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "RetryAfter": {
+        "description": "Minimum number of seconds to wait before retrying the upload.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "RFC 9457 Problem Details",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/XRequestId"
+          },
+          "OpenCOI-Version": {
+            "$ref": "#/components/headers/OpenCoiVersion"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "UploadCapacityProblem": {
+        "description": "Certificate upload capacity is temporarily exhausted.",
+        "headers": {
+          "X-Request-ID": {
+            "$ref": "#/components/headers/XRequestId"
+          },
+          "OpenCOI-Version": {
+            "$ref": "#/components/headers/OpenCoiVersion"
+          },
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "VendorStatus": {
+        "type": "string",
+        "enum": [
+          "active",
+          "inactive",
+          "archived"
+        ]
+      },
+      "VendorInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "vendorTypeId",
+          "legalName"
+        ],
+        "properties": {
+          "vendorTypeId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "legalName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "tradeName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 240
+          },
+          "contactName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "contactEmail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email",
+            "maxLength": 320
+          },
+          "contactPhone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
+          },
+          "externalReference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 5000
+          }
+        }
+      },
+      "Vendor": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "vendorType",
+          "legalName",
+          "tradeName",
+          "contact",
+          "externalReference",
+          "status",
+          "notes",
+          "latestCertificate",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vendorType": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "legalName": {
+            "type": "string"
+          },
+          "tradeName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "email",
+              "phone"
+            ],
+            "properties": {
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "email": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "phone": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "externalReference": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/VendorStatus"
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latestCertificate": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/VendorLatestCertificate"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "VendorLatestCertificate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "complianceStatus",
+          "expirationDate"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "complianceStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expirationDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          }
+        }
+      },
+      "VendorPatch": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "vendorTypeId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "legalName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "tradeName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 240
+          },
+          "contactName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "contactEmail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email",
+            "maxLength": 320
+          },
+          "contactPhone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 80
+          },
+          "externalReference": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "notes": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 5000
+          },
+          "status": {
+            "$ref": "#/components/schemas/VendorStatus"
+          }
+        }
+      },
+      "VendorEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Vendor"
+          }
+        }
+      },
+      "VendorMutationReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "result",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "created",
+              "updated"
+            ]
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "VendorMutationEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/VendorMutationReceipt"
+          }
+        }
+      },
+      "CertificateSubmissionMetadata": {
+        "type": "object",
+        "description": "Client-generated extraction proposal. Strong endorsement evidence must cite at least one page in the submitted contiguous page metadata.",
+        "properties": {
+          "extractionVersion": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "extractionMethod": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "rawText": {
+            "type": "string",
+            "maxLength": 2000000,
+            "default": ""
+          },
+          "pages": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/ExtractedPage"
+            }
+          },
+          "reviewStatus": {
+            "type": "string",
+            "enum": [
+              "CONFIRMED",
+              "UNCONFIRMED"
+            ],
+            "default": "UNCONFIRMED",
+            "description": "The API ignores CONFIRMED and always creates an unconfirmed record."
+          },
+          "namedInsured": {
+            "type": "string",
+            "maxLength": 500,
+            "default": ""
+          },
+          "issueDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "producer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "certificateHolder": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "provenance": {
+            "type": "array",
+            "maxItems": 2000,
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ExtractionProvenanceInput"
+            }
+          },
+          "policies": {
+            "type": "array",
+            "maxItems": 50,
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CertificatePolicyInput"
+            }
+          }
+        }
+      },
+      "ExtractedPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "page",
+          "text",
+          "method"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 2000000
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "text_layer",
+              "ocr"
+            ]
+          },
+          "confidenceBps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          }
+        }
+      },
+      "ExtractionProvenanceInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "field",
+          "extractedValue",
+          "source",
+          "rawText",
+          "page"
+        ],
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "NAMED_INSURED",
+              "CERTIFICATE_HOLDER",
+              "COVERAGE_TYPE",
+              "INSURER_NAME",
+              "POLICY_NUMBER",
+              "EFFECTIVE_DATE",
+              "EXPIRATION_DATE",
+              "LIMIT",
+              "ENDORSEMENT_NAME",
+              "ENDORSEMENT_FORM_CODE",
+              "ENDORSEMENT_EVIDENCE_LEVEL"
+            ]
+          },
+          "extractedValue": {
+            "oneOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "integer",
+                "minimum": 0
+              }
+            ]
+          },
+          "policyIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49
+          },
+          "endorsementIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 99
+          },
+          "limitType": {
+            "$ref": "#/components/schemas/LimitType"
+          },
+          "source": {
+            "type": "string",
+            "const": "OCR"
+          },
+          "confidenceBps": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "rawText": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          }
+        }
+      },
+      "CertificatePolicyInput": {
+        "type": "object",
+        "required": [
+          "coverageType"
+        ],
+        "properties": {
+          "coverageType": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "insurer": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "insurerName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "policyNumber": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500
+          },
+          "effectiveDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "expirationDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits"
+          },
+          "endorsements": {
+            "type": "array",
+            "maxItems": 100,
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EndorsementInput"
+            }
+          }
+        }
+      },
+      "EndorsementInput": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "evidenceLevel": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EndorsementEvidenceLevel"
+              }
+            ],
+            "default": "MENTIONED"
+          },
+          "formCode": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "sourcePages": {
+            "type": "array",
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "description": "Must be strictly ascending; required for ATTACHED and HUMAN_VERIFIED."
+          }
+        }
+      },
+      "Certificate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "vendorId",
+          "originalFilename",
+          "sha256",
+          "pageCount",
+          "documentStatus",
+          "checkStatus",
+          "lifecycleStatus",
+          "issueDate",
+          "namedInsured",
+          "producer",
+          "certificateHolder",
+          "uploadedAt",
+          "confirmedAt",
+          "requirementVersion",
+          "evaluationVendorType",
+          "evaluatedRuleset",
+          "evaluationDate",
+          "reviewDecision",
+          "evidence",
+          "policies",
+          "findings"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "vendorId": {
+            "type": "string"
+          },
+          "originalFilename": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "pageCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 100
+          },
+          "documentStatus": {
+            "type": "string",
+            "enum": [
+              "pending_review",
+              "confirmed",
+              "superseded",
+              "rejected"
+            ]
+          },
+          "checkStatus": {
+            "type": "string",
+            "enum": [
+              "meets",
+              "deficient",
+              "needs_review",
+              "approved_exception",
+              "not_submitted"
+            ]
+          },
+          "lifecycleStatus": {
+            "type": "string",
+            "enum": [
+              "current",
+              "expiring",
+              "expired",
+              "future",
+              "unknown"
+            ]
+          },
+          "issueDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "namedInsured": {
+            "type": "string"
+          },
+          "producer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "certificateHolder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "uploadedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "confirmedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "requirementVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "evaluationVendorType": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Identity"
+              }
+            ]
+          },
+          "evaluatedRuleset": {
+            "$ref": "#/components/schemas/CanonicalValue"
+          },
+          "evaluationDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "reviewDecision": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CertificateReviewDecision"
+              }
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ExtractionCitation"
+                },
+                {
+                  "$ref": "#/components/schemas/EndorsementPageAttestation"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "kind"
+              }
+            }
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CertificatePolicy"
+            }
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CertificateFinding"
+            }
+          }
+        }
+      },
+      "CertificateReviewDecision": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "reason",
+          "reviewedAt"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "REJECTED"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "reviewedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CertificateEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/Certificate"
+          }
+        }
+      },
+      "CertificateSubmissionReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "vendorId",
+          "result",
+          "reviewStatus",
+          "submittedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "vendorId": {
+            "type": "string"
+          },
+          "result": {
+            "type": "string",
+            "const": "submitted"
+          },
+          "reviewStatus": {
+            "type": "string",
+            "const": "UNCONFIRMED"
+          },
+          "submittedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CertificateSubmissionEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CertificateSubmissionReceipt"
+          }
+        }
+      },
+      "ExtractionCitation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "field",
+          "extractedValue",
+          "policyIndex",
+          "endorsementIndex",
+          "limitType",
+          "confidenceBps",
+          "rawText",
+          "page",
+          "origin",
+          "attestationStatus"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "extraction_citation"
+          },
+          "field": {
+            "type": "string"
+          },
+          "extractedValue": {
+            "type": [
+              "string",
+              "integer"
+            ]
+          },
+          "policyIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "endorsementIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "limitType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "confidenceBps": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 10000
+          },
+          "rawText": {
+            "type": "string"
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "origin": {
+            "type": "string",
+            "const": "client_submitted_extraction"
+          },
+          "attestationStatus": {
+            "type": "string",
+            "enum": [
+              "unverified",
+              "reviewer_attested"
+            ]
+          }
+        }
+      },
+      "EndorsementPageAttestation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "policyIndex",
+          "endorsementIndex",
+          "endorsementName",
+          "formCode",
+          "evidenceLevel",
+          "sourcePages",
+          "sourceDocumentSha256",
+          "origin",
+          "attestationStatus",
+          "attestedByUserId",
+          "attestedAt"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "endorsement_page_attestation"
+          },
+          "policyIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 49
+          },
+          "endorsementIndex": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 99
+          },
+          "endorsementName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "formCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 100
+          },
+          "evidenceLevel": {
+            "$ref": "#/components/schemas/EndorsementEvidenceLevel"
+          },
+          "sourcePages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "sourceDocumentSha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$"
+          },
+          "origin": {
+            "type": "string",
+            "const": "submitted_endorsement_page_reference"
+          },
+          "attestationStatus": {
+            "type": "string",
+            "const": "reviewer_attested"
+          },
+          "attestedByUserId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attestedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CertificatePolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "coverageType",
+          "insurer",
+          "policyNumber",
+          "effectiveDate",
+          "expirationDate",
+          "eachOccurrence",
+          "aggregate",
+          "limits",
+          "currency",
+          "additionalInsured",
+          "waiverOfSubrogation",
+          "primaryNoncontributory",
+          "endorsements"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "coverageType": {
+            "type": "string"
+          },
+          "insurer": {
+            "type": "string"
+          },
+          "policyNumber": {
+            "type": "string"
+          },
+          "effectiveDate": {
+            "type": "string"
+          },
+          "expirationDate": {
+            "type": "string"
+          },
+          "eachOccurrence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "aggregate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "limits": {
+            "$ref": "#/components/schemas/Limits"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "additionalInsured": {
+            "type": "boolean"
+          },
+          "waiverOfSubrogation": {
+            "type": "boolean"
+          },
+          "primaryNoncontributory": {
+            "type": "boolean"
+          },
+          "endorsements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endorsement"
+            }
+          }
+        }
+      },
+      "Endorsement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "formCode",
+          "evidenceLevel",
+          "evidence"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "formCode": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidenceLevel": {
+            "$ref": "#/components/schemas/EndorsementEvidenceLevel"
+          },
+          "sourcePages": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "evidence": {
+            "type": "string",
+            "enum": [
+              "indicated",
+              "document",
+              "reviewed_document"
+            ]
+          }
+        }
+      },
+      "CertificateFinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "ruleCode",
+          "coverageType",
+          "outcome",
+          "severity",
+          "reasonCode",
+          "message",
+          "expected",
+          "observed",
+          "excepted"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "ruleCode": {
+            "type": "string"
+          },
+          "coverageType": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNKNOWN",
+              "NOT_APPLICABLE"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "blocking",
+              "warning",
+              "info"
+            ]
+          },
+          "reasonCode": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "expected": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "observed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "excepted": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LimitType": {
+        "type": "string",
+        "enum": [
+          "EACH_OCCURRENCE",
+          "DAMAGE_TO_RENTED_PREMISES",
+          "MEDICAL_EXPENSE",
+          "PERSONAL_ADVERTISING_INJURY",
+          "GENERAL_AGGREGATE",
+          "PRODUCTS_COMPLETED_OPERATIONS_AGGREGATE",
+          "COMBINED_SINGLE_LIMIT",
+          "BODILY_INJURY_PER_PERSON",
+          "BODILY_INJURY_PER_ACCIDENT",
+          "PROPERTY_DAMAGE_PER_ACCIDENT",
+          "EACH_ACCIDENT",
+          "DISEASE_EACH_EMPLOYEE",
+          "DISEASE_POLICY_LIMIT",
+          "EACH_CLAIM",
+          "AGGREGATE"
+        ]
+      },
+      "Limits": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "EACH_OCCURRENCE": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "DAMAGE_TO_RENTED_PREMISES": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "MEDICAL_EXPENSE": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "PERSONAL_ADVERTISING_INJURY": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "GENERAL_AGGREGATE": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "PRODUCTS_COMPLETED_OPERATIONS_AGGREGATE": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "COMBINED_SINGLE_LIMIT": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "BODILY_INJURY_PER_PERSON": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "BODILY_INJURY_PER_ACCIDENT": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "PROPERTY_DAMAGE_PER_ACCIDENT": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "EACH_ACCIDENT": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "DISEASE_EACH_EMPLOYEE": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "DISEASE_POLICY_LIMIT": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "EACH_CLAIM": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "AGGREGATE": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "EndorsementEvidenceLevel": {
+        "type": "string",
+        "enum": [
+          "NONE",
+          "MENTIONED",
+          "SCHEDULED",
+          "ATTACHED",
+          "HUMAN_VERIFIED"
+        ]
+      },
+      "CertificateRequestInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "deliveryMethod"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "renewal"
+            ]
+          },
+          "deliveryMethod": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "smtp"
+            ]
+          },
+          "recipientName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200
+          },
+          "recipientEmail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email",
+            "maxLength": 320
+          },
+          "sourceCertificateId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 128,
+            "description": "Optional certificate in the same organization. When supplied, certificates:read is required in addition to requests:write."
+          },
+          "ttlDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 365,
+            "default": 14
+          }
+        }
+      },
+      "CertificateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "vendorId",
+          "uploadLinkId",
+          "sourceCertificateId",
+          "submittedCertificateId",
+          "kind",
+          "deliveryMethod",
+          "deliveryStatus",
+          "recipientName",
+          "recipientEmail",
+          "state",
+          "expiresAt",
+          "uploadUseCount",
+          "uploadRevokedAt",
+          "attemptCount",
+          "lastAttemptAt",
+          "nextAttemptAt",
+          "acceptedAt",
+          "deliveryError",
+          "createdByUserId",
+          "submittedAt",
+          "cancelledAt",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "vendorId": {
+            "type": "string"
+          },
+          "uploadLinkId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sourceCertificateId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "submittedCertificateId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "renewal"
+            ]
+          },
+          "deliveryMethod": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "smtp"
+            ]
+          },
+          "deliveryStatus": {
+            "type": "string",
+            "enum": [
+              "manual_ready",
+              "queued",
+              "processing",
+              "accepted",
+              "failed",
+              "cancelled",
+              "superseded",
+              "expired"
+            ]
+          },
+          "recipientName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recipientEmail": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "email"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "submitted",
+              "cancelled",
+              "expired"
+            ]
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "uploadUseCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "uploadRevokedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "attemptCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "lastAttemptAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "nextAttemptAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "acceptedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "deliveryError": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdByUserId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "submittedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "cancelledAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CertificateRequestEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CertificateRequest"
+          }
+        }
+      },
+      "CertificateRequestCancellationReceipt": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "result",
+          "state",
+          "cancelledAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "cancelled"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "cancelled"
+            ]
+          },
+          "cancelledAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CertificateRequestCancellationEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/CertificateRequestCancellationReceipt"
+          }
+        }
+      },
+      "CertificateRequestCreateEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "request",
+              "uploadUrl",
+              "disclosure"
+            ],
+            "properties": {
+              "request": {
+                "$ref": "#/components/schemas/CertificateRequest"
+              },
+              "uploadUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "uri",
+                "description": "Bearer URL returned only for manual delivery."
+              },
+              "disclosure": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "CertificateRequestPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CertificateRequest"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta"
+          }
+        }
+      },
+      "Identity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CanonicalValue": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CanonicalValue"
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CanonicalValue"
+            }
+          }
+        ]
+      },
+      "EvidenceBundle": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "schemaVersion",
+          "exportedAt",
+          "payload",
+          "integrity"
+        ],
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "1.0"
+          },
+          "exportedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/EvidenceBundlePayload"
+          },
+          "integrity": {
+            "$ref": "#/components/schemas/EvidenceBundleIntegrity"
+          }
+        }
+      },
+      "EvidenceBundlePayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generator",
+          "scope",
+          "exportedBy",
+          "sourceDocument",
+          "review",
+          "machineProposal",
+          "confirmedFacts",
+          "evidence",
+          "requirementSnapshot",
+          "findings",
+          "exceptions",
+          "statusAtExport",
+          "audit"
+        ],
+        "properties": {
+          "generator": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "version",
+              "origin"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "const": "OpenCOI"
+              },
+              "version": {
+                "type": "string",
+                "minLength": 1
+              },
+              "origin": {
+                "type": "string",
+                "format": "uri"
+              }
+            }
+          },
+          "scope": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "organization",
+              "vendor",
+              "certificateId"
+            ],
+            "properties": {
+              "organization": {
+                "$ref": "#/components/schemas/Identity"
+              },
+              "vendor": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "legalName",
+                  "vendorTypeAtExport"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "legalName": {
+                    "type": "string"
+                  },
+                  "vendorTypeAtExport": {
+                    "$ref": "#/components/schemas/Identity"
+                  }
+                }
+              },
+              "certificateId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "exportedBy": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "sourceDocument": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "originalFilename",
+              "mimeType",
+              "byteSize",
+              "sha256",
+              "uploadedAt"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "originalFilename": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string",
+                "const": "application/pdf"
+              },
+              "byteSize": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "uploadedAt": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "review": {
+            "$ref": "#/components/schemas/EvidenceReview"
+          },
+          "machineProposal": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/CanonicalValue"
+                }
+              }
+            ]
+          },
+          "confirmedFacts": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EvidenceConfirmedFacts"
+              }
+            ]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/ExtractionCitation"
+                },
+                {
+                  "$ref": "#/components/schemas/EndorsementPageAttestation"
+                }
+              ]
+            }
+          },
+          "requirementSnapshot": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EvidenceRequirementSnapshot"
+              }
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceFinding"
+            }
+          },
+          "exceptions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvidenceException"
+            }
+          },
+          "statusAtExport": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "documentCheck",
+              "documentLifecycle",
+              "asOf",
+              "limitation"
+            ],
+            "properties": {
+              "documentCheck": {
+                "type": "string",
+                "enum": [
+                  "meets",
+                  "deficient",
+                  "needs_review",
+                  "approved_exception",
+                  "not_submitted"
+                ]
+              },
+              "documentLifecycle": {
+                "type": "string",
+                "enum": [
+                  "current",
+                  "expiring",
+                  "expired",
+                  "future",
+                  "unknown"
+                ]
+              },
+              "asOf": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "limitation": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "audit": {
+            "$ref": "#/components/schemas/EvidenceAudit"
+          }
+        }
+      },
+      "EvidenceReview": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "reviewedBy",
+          "reviewedAt",
+          "evaluationDate",
+          "requirementVersion",
+          "evaluationVendorType"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "confirmed",
+              "superseded",
+              "rejected"
+            ]
+          },
+          "reviewedBy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "name"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "reviewedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "evaluationDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "requirementVersion": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "evaluationVendorType": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Identity"
+              }
+            ]
+          }
+        }
+      },
+      "EvidenceConfirmedFacts": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "namedInsured",
+          "issueDate",
+          "producer",
+          "certificateHolder",
+          "policies"
+        ],
+        "properties": {
+          "namedInsured": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "issueDate": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "producer": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "certificateHolder": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policies": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CertificatePolicy"
+            }
+          }
+        }
+      },
+      "EvidenceRequirementSnapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "version",
+          "vendorType",
+          "evaluatedRuleset",
+          "publication"
+        ],
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "vendorType": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "evaluatedRuleset": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CanonicalValue"
+            }
+          },
+          "publication": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "publishedAt",
+                  "publishedBy",
+                  "requirements"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "publishedAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "publishedBy": {
+                    "oneOf": [
+                      {
+                        "type": "null"
+                      },
+                      {
+                        "$ref": "#/components/schemas/Identity"
+                      }
+                    ]
+                  },
+                  "requirements": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/CanonicalValue"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "EvidenceFinding": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "requirementId",
+          "category",
+          "outcome",
+          "code",
+          "severity",
+          "coverageType",
+          "title",
+          "message",
+          "expected",
+          "observed",
+          "evidenceIds",
+          "evaluatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "requirementId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "category": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string"
+          },
+          "coverageType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "expected": {
+            "$ref": "#/components/schemas/CanonicalValue"
+          },
+          "observed": {
+            "$ref": "#/components/schemas/CanonicalValue"
+          },
+          "evidenceIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "evaluatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "EvidenceException": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "findingId",
+          "status",
+          "request",
+          "decisionReason",
+          "requestedBy",
+          "requestedAt",
+          "decidedBy",
+          "decidedAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "findingId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "rejected",
+              "revoked",
+              "expired"
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/CanonicalValue"
+          },
+          "decisionReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestedBy": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "requestedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "decidedBy": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Identity"
+              }
+            ]
+          },
+          "decidedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          }
+        }
+      },
+      "EvidenceAudit": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "organizationChainVerifiedAtExport",
+          "checkedEvents",
+          "error",
+          "head",
+          "certificateEvents"
+        ],
+        "properties": {
+          "organizationChainVerifiedAtExport": {
+            "type": "boolean"
+          },
+          "checkedEvents": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "head": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "sequence",
+                  "eventHash",
+                  "occurredAt"
+                ],
+                "properties": {
+                  "sequence": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "eventHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
+                  },
+                  "occurredAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            ]
+          },
+          "certificateEvents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "sequence",
+                "id",
+                "actorType",
+                "actorUserId",
+                "action",
+                "entityType",
+                "entityId",
+                "occurredAt",
+                "metadata",
+                "previousHash",
+                "eventHash"
+              ],
+              "properties": {
+                "sequence": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "actorType": {
+                  "type": "string"
+                },
+                "actorUserId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "action": {
+                  "type": "string"
+                },
+                "entityType": {
+                  "type": "string"
+                },
+                "entityId": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "occurredAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "metadata": {
+                  "$ref": "#/components/schemas/CanonicalValue"
+                },
+                "previousHash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "eventHash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                }
+              }
+            }
+          }
+        }
+      },
+      "EvidenceBundleIntegrity": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "canonicalization",
+          "digest",
+          "signature"
+        ],
+        "properties": {
+          "canonicalization": {
+            "type": "string",
+            "const": "OPENCOI_CANONICAL_JSON_V1"
+          },
+          "digest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "algorithm",
+              "value"
+            ],
+            "properties": {
+              "algorithm": {
+                "type": "string",
+                "const": "SHA-256"
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            }
+          },
+          "signature": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "algorithm",
+              "keyId",
+              "publicKeySpki",
+              "publicKeyFingerprint",
+              "value"
+            ],
+            "properties": {
+              "algorithm": {
+                "type": "string",
+                "const": "Ed25519"
+              },
+              "keyId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$",
+                "description": "Unauthenticated legacy v1 display metadata outside the canonical signed record. Do not use it for signer identity."
+              },
+              "publicKeySpki": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]+$",
+                "maxLength": 8192
+              },
+              "publicKeyFingerprint": {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              },
+              "value": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{86}$"
+              }
+            }
+          }
+        }
+      },
+      "VendorTypePage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VendorType"
+            }
+          }
+        }
+      },
+      "VendorType": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "description",
+          "active",
+          "requirements",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CoverageRequirement"
+            }
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CoverageRequirement": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "coverageType",
+          "minimumEachOccurrence",
+          "minimumAggregate",
+          "minimumCombinedSingleLimit",
+          "maximumDeductible",
+          "requiresAdditionalInsured",
+          "requiresWaiverOfSubrogation",
+          "requiresPrimaryNoncontributory",
+          "requiresCancellationNotice",
+          "requiredEndorsements"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "coverageType": {
+            "type": "string"
+          },
+          "minimumEachOccurrence": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "minimumAggregate": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "minimumCombinedSingleLimit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "maximumDeductible": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "requiresAdditionalInsured": {
+            "type": "boolean"
+          },
+          "requiresWaiverOfSubrogation": {
+            "type": "boolean"
+          },
+          "requiresPrimaryNoncontributory": {
+            "type": "boolean"
+          },
+          "requiresCancellationNotice": {
+            "type": "boolean"
+          },
+          "requiredEndorsements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CanonicalValue"
+            }
+          }
+        }
+      },
+      "ComplianceEnvelope": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "vendorId",
+              "certificate",
+              "findings",
+              "policies"
+            ],
+            "properties": {
+              "vendorId": {
+                "type": "string"
+              },
+              "certificate": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ComplianceCertificate"
+                  }
+                ]
+              },
+              "findings": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ComplianceFindingRow"
+                }
+              },
+              "policies": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CompliancePolicyRow"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ComplianceCertificate": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "confirmation_status",
+          "compliance_status",
+          "earliest_effective_date",
+          "earliest_expiration_date",
+          "confirmed_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "confirmation_status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "confirmed",
+              "superseded",
+              "rejected"
+            ]
+          },
+          "compliance_status": {
+            "type": "string",
+            "enum": [
+              "pending_review",
+              "compliant",
+              "non_compliant",
+              "exception",
+              "expired"
+            ]
+          },
+          "earliest_effective_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "earliest_expiration_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "confirmed_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ComplianceFindingRow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "category",
+          "evaluation_status",
+          "code",
+          "severity",
+          "coverage_type",
+          "title",
+          "message",
+          "expected_json",
+          "actual_json",
+          "evidence_ids_json",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "evaluation_status": {
+            "type": "string",
+            "enum": [
+              "PASS",
+              "FAIL",
+              "UNKNOWN",
+              "NOT_APPLICABLE"
+            ]
+          },
+          "code": {
+            "type": "string"
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "critical",
+              "warning",
+              "info"
+            ]
+          },
+          "coverage_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "expected_json": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "actual_json": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence_ids_json": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CompliancePolicyRow": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "coverage_type",
+          "insurer_name",
+          "insurer_naic",
+          "policy_number",
+          "effective_date",
+          "expiration_date",
+          "each_occurrence_limit",
+          "aggregate_limit",
+          "combined_single_limit",
+          "deductible",
+          "additional_insured",
+          "waiver_of_subrogation",
+          "primary_noncontributory",
+          "cancellation_notice"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "coverage_type": {
+            "type": "string"
+          },
+          "insurer_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "insurer_naic": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "policy_number": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "effective_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "expiration_date": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          },
+          "each_occurrence_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "aggregate_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "combined_single_limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "deductible": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "additional_insured": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "enum": [
+              0,
+              1,
+              null
+            ]
+          },
+          "waiver_of_subrogation": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "enum": [
+              0,
+              1,
+              null
+            ]
+          },
+          "primary_noncontributory": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "enum": [
+              0,
+              1,
+              null
+            ]
+          },
+          "cancellation_notice": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "enum": [
+              0,
+              1,
+              null
+            ]
+          }
+        }
+      },
+      "DomainEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "sequence",
+          "type",
+          "occurredAt",
+          "resource",
+          "data"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "sequence": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "type": {
+            "type": "string"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resource": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "id"
+            ],
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          },
+          "data": {}
+        }
+      },
+      "PageMeta": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "limit",
+          "hasMore",
+          "nextCursor"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "VendorPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Vendor"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta"
+          }
+        }
+      },
+      "EventPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "data",
+          "meta"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DomainEvent"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/PageMeta"
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "instance",
+          "requestId"
+        ],
+        "properties": {
+          "type": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "instance": {
+            "type": "string"
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "errors": {}
+        }
+      }
+    }
+  }
+}

@@ -1,15 +1,15 @@
 import "dotenv/config";
 import { loadConfig } from "../config.js";
 import { openDatabase } from "../db.js";
+import { migrateDatabase } from "../migrations.js";
 import { runCertificateRequestDeliveryCycle } from "../services/certificateRequestDelivery.js";
-import { ensureIntegrationSchema } from "../services/integrationSchema.js";
 
 const config = loadConfig();
 if (!config.smtp || !config.tokenPepper) {
   throw new Error("SMTP and TOKEN_PEPPER are required for certificate-request delivery");
 }
-const database = openDatabase(config.databasePath);
-ensureIntegrationSchema(database);
+const database = openDatabase(config.databasePath, { initialize: false });
+migrateDatabase(database);
 const watch = process.argv.includes("--watch");
 let stopping = false;
 

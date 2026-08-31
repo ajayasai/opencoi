@@ -615,6 +615,11 @@
   font-size: 0.7rem;
 }
 
+.endorsement-evidence-item {
+  display: grid;
+  gap: 8px;
+}
+
 .endorsement-empty {
   padding: 18px;
   color: var(--ink-muted);
@@ -634,7 +639,9 @@
 .custom-endorsement {
   display: grid;
   padding: 12px;
-  grid-template-columns: minmax(160px, 1.2fr) minmax(110px, 0.7fr) minmax(180px, 1fr) auto;
+  grid-template-columns:
+    minmax(160px, 1.2fr) minmax(110px, 0.7fr) minmax(160px, 1fr)
+    minmax(130px, 0.8fr) auto;
   gap: 10px;
   align-items: end;
   background: white;
@@ -982,7 +989,9 @@
 }
 
 .correction-row--endorsement {
-  grid-template-columns: minmax(170px, 1.4fr) minmax(110px, 0.8fr) minmax(160px, 1fr) auto;
+  grid-template-columns:
+    minmax(170px, 1.4fr) minmax(110px, 0.8fr) minmax(145px, 0.9fr)
+    minmax(130px, 0.8fr) auto;
 }
 
 .correction-row > .icon-button {
@@ -1320,6 +1329,13 @@
 .policy-endorsements li strong {
   color: var(--ink);
   font-weight: 650;
+}
+
+.policy-endorsements li > a {
+  color: var(--forest-700);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .evidence-card,

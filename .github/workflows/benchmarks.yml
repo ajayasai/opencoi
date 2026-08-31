@@ -23,12 +23,17 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Generate public synthetic predictions
-        run: npx tsx benchmark/run-shared.ts benchmark/corpus/synthetic-text-v1.json "$RUNNER_TEMP/predictions.json" v0.2.0
+        run: npx tsx benchmark/run-shared.ts benchmark/corpus/synthetic-text-v1.json "$RUNNER_TEMP/predictions.json" v0.4.0
       - name: Score public synthetic predictions
         run: npx tsx benchmark/score.ts benchmark/corpus/synthetic-text-v1.json "$RUNNER_TEMP/predictions.json" "$RUNNER_TEMP/score.json"
       - name: Verify frozen public baseline
         run: |
-          node -e "const fs=require('fs');const expected=JSON.parse(fs.readFileSync('benchmark/results/synthetic-text-v1-opencoi-v0.2.0.score.json'));const actual=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/score.json'));if(JSON.stringify(actual)!==JSON.stringify(expected)){console.error('Benchmark regression: inspect the committed corpus, prediction diff, and failure cases.');process.exit(1)}"
+          node -e "const fs=require('fs');const expected=JSON.parse(fs.readFileSync('benchmark/results/synthetic-text-v1-opencoi-v0.4.0.score.json'));const actual=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/score.json'));if(JSON.stringify(actual)!==JSON.stringify(expected)){console.error('Benchmark regression: inspect the committed corpus, prediction diff, and failure cases.');process.exit(1)}"
+      - name: Verify authorization-aware status report
+        run: |
+          npm run benchmark:head-to-head -- benchmark/corpus/synthetic-text-v1.json benchmark/examples/head-to-head-synthetic-v1.manifest.json "$RUNNER_TEMP/head-to-head"
+          diff -u benchmark/results/head-to-head-synthetic-v1.json "$RUNNER_TEMP/head-to-head.json"
+          diff -u benchmark/results/head-to-head-synthetic-v1.md "$RUNNER_TEMP/head-to-head.md"
       - name: Upload machine-readable outputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -36,6 +41,8 @@ jobs:
           path: |
             ${{ runner.temp }}/predictions.json
             ${{ runner.temp }}/score.json
+            ${{ runner.temp }}/head-to-head.json
+            ${{ runner.temp }}/head-to-head.md
 
   scale-smoke:
     runs-on: ubuntu-latest

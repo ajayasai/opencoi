@@ -1,0 +1,135 @@
+{
+  "schemaVersion": "1.0",
+  "comparisonId": "synthetic-text-v1-public-status",
+  "title": "Synthetic text benchmark: public evidence status",
+  "reportDate": "2026-09-01",
+  "corpus": {
+    "id": "opencoi-synthetic-text-v1",
+    "title": "OpenCOI original synthetic page-text benchmark v1",
+    "sha256": "af737d1acaa50b4c827b78dfeecba30219dc484e0022f869d111381073020012",
+    "caseCount": 6,
+    "license": "CC0-1.0"
+  },
+  "referenceSystemId": "opencoi-shared-parser",
+  "methodology": {
+    "mode": "ZERO_TOUCH_TEXT_PARSE",
+    "scorer": "OpenCOI deterministic benchmark scorer 1.0",
+    "protocol": "Supply vendor-neutral prediction-v1 artifacts generated from the identical frozen page-text corpus, validate them strictly, then score every supplied artifact with the same deterministic scorer. Do not inspect truth while producing new comparator predictions.",
+    "rowOrder": "SYSTEM_ID_ASCENDING_NOT_SCORE",
+    "missingDataPolicy": "NOT_TESTED_IS_NOT_ZERO",
+    "authorizationPolicy": "SELF_ATTESTATION_RECORDED_NOT_VERIFIED",
+    "limitations": [
+      "TESTED records a supplied normalized artifact and publisher declarations; it does not independently verify legal authorization or publication rights.",
+      "NOT_TESTED means no authorized publishable artifact was supplied; it is not a zero score and has no delta.",
+      "Synthetic zero-touch text parsing does not measure browser OCR, policy status, workflow quality, integrations, usability, or overall product superiority.",
+      "The six-case corpus is original synthetic regression data and is too small for a general accuracy claim.",
+      "The published OpenCOI baseline was not blinded; it is included only to demonstrate the public protocol and evidence status."
+    ]
+  },
+  "rows": [
+    {
+      "system": {
+        "id": "certfocus",
+        "name": "CertFocus"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    },
+    {
+      "system": {
+        "id": "certificial",
+        "name": "Certificial"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    },
+    {
+      "system": {
+        "id": "mycoi-illumend",
+        "name": "myCOI / illumend"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    },
+    {
+      "system": {
+        "id": "opencoi-shared-parser",
+        "name": "OpenCOI shared text parser",
+        "version": "v0.4.0"
+      },
+      "status": "TESTED",
+      "authorizationEvidence": "SELF_ATTESTED_NOT_INDEPENDENTLY_VERIFIED",
+      "authorization": {
+        "accessAuthorized": true,
+        "publicationPermission": true,
+        "attestedBy": "OpenCOI maintainers",
+        "attestedAt": "2026-09-01T00:00:00Z",
+        "basis": "First-party execution of the AGPL-3.0-only OpenCOI parser against the CC0-1.0 synthetic corpus."
+      },
+      "provenance": {
+        "sourceType": "FIRST_PARTY_RUN",
+        "sourceArtifact": "benchmark/results/synthetic-text-v1-opencoi-v0.4.0.predictions.json",
+        "sourceArtifactSha256": "d63d21e3ab223ee98d71fce0cd474866307f2c4116617590822c4758270f8963",
+        "predictionArtifactSha256": "d63d21e3ab223ee98d71fce0cd474866307f2c4116617590822c4758270f8963",
+        "outputProducedAt": "2026-09-01T00:00:00Z",
+        "runBy": "OpenCOI maintainers",
+        "truthAccess": "NOT_BLINDED",
+        "normalizationMethod": "Direct output from the committed OpenCOI shared-parser adapter; no third-party format translation.",
+        "settings": {
+          "mode": "ZERO_TOUCH_TEXT_PARSE",
+          "timing": "disabled for deterministic output"
+        },
+        "normalizedPredictionSha256": "509f1566a5b34c28008b7840eebc2bbea0c3bbc4c9fd432ae9e770d2e2fabbe7",
+        "deterministicScoreSha256": "4bff2f4105b5a5e541df962af4fc98b03ba715f37572be3a4554fb49ac8e8a8e"
+      },
+      "score": {
+        "facts": {
+          "precision": 1,
+          "recall": 0.969231,
+          "f1": 0.984375
+        },
+        "macroF1": 0.992481,
+        "citations": {
+          "precision": 1,
+          "recall": 0.969231
+        },
+        "warnings": {
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "exactDocuments": 5,
+        "documentCount": 6,
+        "exactDocumentRate": 0.833333,
+        "durationMs": {
+          "reportedCases": 0,
+          "median": 0,
+          "p95": 0
+        }
+      },
+      "deltaFromReference": {
+        "macroF1": 0,
+        "factsF1": 0,
+        "citationRecall": 0,
+        "warningF1": 0,
+        "exactDocumentRate": 0
+      }
+    },
+    {
+      "system": {
+        "id": "smartcompliance",
+        "name": "SmartCompliance"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    },
+    {
+      "system": {
+        "id": "trustlayer",
+        "name": "TrustLayer"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    }
+  ]
+}

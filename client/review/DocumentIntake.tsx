@@ -21,6 +21,7 @@ import {
   extractPdfInBrowser,
 } from "../lib/documentExtraction";
 import { useToast } from "../state/ToastContext";
+import { parseEndorsementSourcePages } from "./endorsementSourcePages";
 
 const coverageOptions: Array<{ value: CoverageType; label: string }> = [
   { value: "COMMERCIAL_GENERAL_LIABILITY", label: "Commercial general liability" },
@@ -60,8 +61,11 @@ interface PolicyDraft {
   aggregateLimitType: LimitType;
   aggregate: string;
   additionalInsured: EndorsementEvidenceDraft;
+  additionalInsuredSourcePages: string;
   waiverOfSubrogation: EndorsementEvidenceDraft;
+  waiverOfSubrogationSourcePages: string;
   primaryNoncontributory: EndorsementEvidenceDraft;
+  primaryNoncontributorySourcePages: string;
 }
 
 type EndorsementEvidenceDraft = "NONE" | "MENTIONED" | "ATTACHED" | "HUMAN_VERIFIED";
@@ -71,6 +75,7 @@ interface EndorsementDraft {
   name: string;
   formCode: string;
   evidenceLevel: EndorsementEvidenceDraft;
+  sourcePages: string;
 }
 
 interface CertificateDraft {
@@ -128,6 +133,7 @@ export interface IntakeSubmission {
       name: string;
       evidenceLevel: Exclude<EndorsementEvidenceDraft, "NONE">;
       formCode?: string;
+      sourcePages?: number[];
     }>;
   }>;
 }
@@ -237,12 +243,15 @@ function draftFromExtraction(result: BrowserExtractionResult): CertificateDraft 
       additionalInsured: /\b(?:ADDL|ADDITIONAL)\s+INSURED\b/i.test(normalized)
         ? "MENTIONED"
         : "NONE",
+      additionalInsuredSourcePages: "",
       waiverOfSubrogation: /\b(?:SUBR\s+WVD|WAIVER\s+OF\s+SUBROGATION)\b/i.test(normalized)
         ? "MENTIONED"
         : "NONE",
+      waiverOfSubrogationSourcePages: "",
       primaryNoncontributory: /\bPRIMARY\s+(?:AND|&)?\s*NON-?CONTRIBUTORY\b/i.test(normalized)
         ? "MENTIONED"
         : "NONE",
+      primaryNoncontributorySourcePages: "",
     };
   });
 
@@ -263,6 +272,7 @@ function draftFromExtraction(result: BrowserExtractionResult): CertificateDraft 
             : endorsement.evidenceLevel.value === "NONE"
               ? ("NONE" as const)
               : ("MENTIONED" as const),
+      sourcePages: "",
     };
   });
 
@@ -294,8 +304,11 @@ function draftFromExtraction(result: BrowserExtractionResult): CertificateDraft 
               aggregateLimitType: "GENERAL_AGGREGATE",
               aggregate: "",
               additionalInsured: "NONE",
+              additionalInsuredSourcePages: "",
               waiverOfSubrogation: "NONE",
+              waiverOfSubrogationSourcePages: "",
               primaryNoncontributory: "NONE",
+              primaryNoncontributorySourcePages: "",
             },
           ],
     endorsements,
@@ -438,8 +451,11 @@ export function DocumentIntake({
                 aggregateLimitType: "GENERAL_AGGREGATE",
                 aggregate: "",
                 additionalInsured: "NONE",
+                additionalInsuredSourcePages: "",
                 waiverOfSubrogation: "NONE",
+                waiverOfSubrogationSourcePages: "",
                 primaryNoncontributory: "NONE",
+                primaryNoncontributorySourcePages: "",
               },
             ],
           }
@@ -467,6 +483,7 @@ export function DocumentIntake({
                 name: "",
                 formCode: "",
                 evidenceLevel: confirmationMode === "staff" ? "HUMAN_VERIFIED" : "ATTACHED",
+                sourcePages: "",
               },
             ],
           }
@@ -515,6 +532,27 @@ export function DocumentIntake({
       return;
     }
 
+    const sourcePagesFor = (value: string, evidenceLevel: EndorsementEvidenceDraft) =>
+      parseEndorsementSourcePages(value, {
+        required: evidenceLevel === "ATTACHED" || evidenceLevel === "HUMAN_VERIFIED",
+        maxPage: extraction.pageCount,
+      });
+    try {
+      for (const policy of draft.policies) {
+        sourcePagesFor(policy.additionalInsuredSourcePages, policy.additionalInsured);
+        sourcePagesFor(policy.waiverOfSubrogationSourcePages, policy.waiverOfSubrogation);
+        sourcePagesFor(policy.primaryNoncontributorySourcePages, policy.primaryNoncontributory);
+      }
+      for (const endorsement of draft.endorsements) {
+        if (endorsement.evidenceLevel !== "NONE" && endorsement.name.trim()) {
+          sourcePagesFor(endorsement.sourcePages, endorsement.evidenceLevel);
+        }
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Check the endorsement source pages.");
+      return;
+    }
+
     const submission: IntakeSubmission = {
       extractionVersion: "pdfjs-tesseract-local-v1",
       extractionMethod: extraction.method,
@@ -536,23 +574,39 @@ export function DocumentIntake({
           name: string;
           evidenceLevel: Exclude<EndorsementEvidenceDraft, "NONE">;
           formCode?: string;
+          sourcePages?: number[];
         }> = [];
         if (policy.additionalInsured !== "NONE") {
+          const sourcePages = sourcePagesFor(
+            policy.additionalInsuredSourcePages,
+            policy.additionalInsured,
+          );
           endorsements.push({
             name: "Additional insured",
             evidenceLevel: policy.additionalInsured,
+            ...(sourcePages ? { sourcePages } : {}),
           });
         }
         if (policy.waiverOfSubrogation !== "NONE") {
+          const sourcePages = sourcePagesFor(
+            policy.waiverOfSubrogationSourcePages,
+            policy.waiverOfSubrogation,
+          );
           endorsements.push({
             name: "Waiver of subrogation",
             evidenceLevel: policy.waiverOfSubrogation,
+            ...(sourcePages ? { sourcePages } : {}),
           });
         }
         if (policy.primaryNoncontributory !== "NONE") {
+          const sourcePages = sourcePagesFor(
+            policy.primaryNoncontributorySourcePages,
+            policy.primaryNoncontributory,
+          );
           endorsements.push({
             name: "Primary and non-contributory",
             evidenceLevel: policy.primaryNoncontributory,
+            ...(sourcePages ? { sourcePages } : {}),
           });
         }
         if (policyIndex === 0) {
@@ -561,14 +615,21 @@ export function DocumentIntake({
               .filter(
                 (endorsement) => endorsement.evidenceLevel !== "NONE" && endorsement.name.trim(),
               )
-              .map((endorsement) => ({
-                name: endorsement.name.trim(),
-                evidenceLevel: endorsement.evidenceLevel as Exclude<
-                  EndorsementEvidenceDraft,
-                  "NONE"
-                >,
-                ...(endorsement.formCode.trim() ? { formCode: endorsement.formCode.trim() } : {}),
-              })),
+              .map((endorsement) => {
+                const sourcePages = sourcePagesFor(
+                  endorsement.sourcePages,
+                  endorsement.evidenceLevel,
+                );
+                return {
+                  name: endorsement.name.trim(),
+                  evidenceLevel: endorsement.evidenceLevel as Exclude<
+                    EndorsementEvidenceDraft,
+                    "NONE"
+                  >,
+                  ...(endorsement.formCode.trim() ? { formCode: endorsement.formCode.trim() } : {}),
+                  ...(sourcePages ? { sourcePages } : {}),
+                };
+              }),
           );
         }
         return {
@@ -927,28 +988,60 @@ export function DocumentIntake({
                     <div className="endorsement-evidence-grid">
                       <span>Common endorsement evidence</span>
                       {[
-                        ["additionalInsured", "Additional insured"],
-                        ["waiverOfSubrogation", "Waiver of subrogation"],
-                        ["primaryNoncontributory", "Primary & non-contributory"],
-                      ].map(([field, label]) => (
-                        <Field key={field} label={label}>
-                          <Select
-                            value={policy[field as keyof PolicyDraft] as EndorsementEvidenceDraft}
-                            onChange={(event) =>
-                              updatePolicy(
-                                index,
-                                field as keyof PolicyDraft,
-                                event.target.value as never,
-                              )
+                        {
+                          level: "additionalInsured" as const,
+                          pages: "additionalInsuredSourcePages" as const,
+                          label: "Additional insured",
+                        },
+                        {
+                          level: "waiverOfSubrogation" as const,
+                          pages: "waiverOfSubrogationSourcePages" as const,
+                          label: "Waiver of subrogation",
+                        },
+                        {
+                          level: "primaryNoncontributory" as const,
+                          pages: "primaryNoncontributorySourcePages" as const,
+                          label: "Primary & non-contributory",
+                        },
+                      ].map((item) => (
+                        <div className="endorsement-evidence-item" key={item.level}>
+                          <Field label={item.label}>
+                            <Select
+                              value={policy[item.level]}
+                              onChange={(event) =>
+                                updatePolicy(
+                                  index,
+                                  item.level,
+                                  event.target.value as EndorsementEvidenceDraft,
+                                )
+                              }
+                            >
+                              {evidenceOptions.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </Select>
+                          </Field>
+                          <Field
+                            label="PDF source page(s)"
+                            hint={
+                              policy[item.level] === "ATTACHED" ||
+                              policy[item.level] === "HUMAN_VERIFIED"
+                                ? "Required; comma separated"
+                                : "Optional; comma separated"
                             }
                           >
-                            {evidenceOptions.map((option) => (
-                              <option key={option.value} value={option.value}>
-                                {option.label}
-                              </option>
-                            ))}
-                          </Select>
-                        </Field>
+                            <TextInput
+                              inputMode="numeric"
+                              value={policy[item.pages]}
+                              onChange={(event) =>
+                                updatePolicy(index, item.pages, event.target.value)
+                              }
+                              placeholder="e.g. 2, 4"
+                            />
+                          </Field>
+                        </div>
                       ))}
                     </div>
                     <Callout tone="info" title="Evidence strength is explicit">
@@ -1017,6 +1110,24 @@ export function DocumentIntake({
                             </option>
                           ))}
                         </Select>
+                      </Field>
+                      <Field
+                        label="PDF source page(s)"
+                        hint={
+                          endorsement.evidenceLevel === "ATTACHED" ||
+                          endorsement.evidenceLevel === "HUMAN_VERIFIED"
+                            ? "Required; comma separated"
+                            : "Optional; comma separated"
+                        }
+                      >
+                        <TextInput
+                          inputMode="numeric"
+                          value={endorsement.sourcePages}
+                          onChange={(event) =>
+                            updateEndorsement(endorsementIndex, "sourcePages", event.target.value)
+                          }
+                          placeholder="e.g. 3, 5"
+                        />
                       </Field>
                       <IconButton
                         label="Remove endorsement"

@@ -12,8 +12,8 @@ import { apiV1RequestMetadata, createApiV1Router } from "./http/apiV1.js";
 import { errorHandler, HttpError, notFound } from "./http/errors.js";
 import { createIntegrationAdminRouter } from "./http/integrationAdminRoutes.js";
 import { createApiRouter } from "./http/routes.js";
-import { ensureIntegrationSchema } from "./services/integrationSchema.js";
-import { ensureApiSchema } from "./services/schema.js";
+import { createUploadCapacityLimiter } from "./http/uploadCapacity.js";
+import { migrateDatabase } from "./migrations.js";
 import type { DocumentStore } from "./storage.js";
 
 export interface CreateAppOptions {
@@ -26,8 +26,8 @@ export interface CreateAppOptions {
 }
 
 export const createApp = (options: CreateAppOptions): Express => {
-  ensureApiSchema(options.database);
-  ensureIntegrationSchema(options.database);
+  migrateDatabase(options.database);
+  const uploadCapacity = createUploadCapacityLimiter();
   const app = express();
   app.disable("x-powered-by");
   // API responses carry authentication and document metadata; do not emit
@@ -91,6 +91,8 @@ export const createApp = (options: CreateAppOptions): Express => {
     createApiV1Router({
       config: options.config,
       database: options.database,
+      documentStore: options.documentStore,
+      uploadCapacity,
       now: options.now,
     }),
   );
@@ -108,6 +110,7 @@ export const createApp = (options: CreateAppOptions): Express => {
       config: options.config,
       database: options.database,
       documentStore: options.documentStore,
+      uploadCapacity,
       now: options.now,
       oidcProtocol:
         options.oidcProtocol ?? (options.config.oidc ? new OpenIdClientProtocol() : undefined),

@@ -10,6 +10,7 @@ const certificate = (): CertificateRecord => ({
   vendorId: "vendor-1",
   originalFilename: "certificate.pdf",
   sha256: "a".repeat(64),
+  pageCount: 3,
   documentStatus: "pending_review",
   checkStatus: "needs_review",
   lifecycleStatus: "current",
@@ -39,6 +40,7 @@ const certificate = (): CertificateRecord => ({
           formCode: "PL-100",
           evidenceLevel: "HUMAN_VERIFIED",
           evidence: "reviewed_document",
+          sourcePages: [2, 3],
         },
       ],
     },
@@ -62,6 +64,7 @@ describe("certificate correction mapping", () => {
           name: "Professional liability endorsement",
           formCode: "PL-100",
           evidenceLevel: "HUMAN_VERIFIED",
+          sourcePages: [2, 3],
         },
       ],
     });
@@ -79,5 +82,15 @@ describe("certificate correction mapping", () => {
     if (!blankDraft.policies[0]?.limits[0]) throw new Error("Fixture is incomplete");
     blankDraft.policies[0].limits[0].amount = "";
     expect(() => correctionInputFromDraft(blankDraft)).toThrow(/needs an amount/i);
+  });
+
+  it("requires source pages for attached and human-verified corrections", () => {
+    const draft = correctionDraftFromCertificate(certificate());
+    if (!draft.policies[0]?.endorsements[0]) throw new Error("Fixture is incomplete");
+    draft.policies[0].endorsements[0].sourcePages = "";
+    expect(() => correctionInputFromDraft(draft)).toThrow(/needs a source page/i);
+
+    draft.policies[0].endorsements[0].sourcePages = "4";
+    expect(() => correctionInputFromDraft(draft)).toThrow(/between 1 and 3/i);
   });
 });

@@ -4,14 +4,23 @@ import { describe, expect, it } from "vitest";
 import type { BenchmarkCorpusV1, BenchmarkScoreV1 } from "../shared/benchmark.js";
 import { compareBenchmarkScores } from "../shared/benchmark.js";
 import corpusDocument from "./corpus/synthetic-text-v1.json" with { type: "json" };
-import predictionsDocument from "./results/synthetic-text-v1-opencoi-v0.2.0.predictions.json" with {
+import manifestDocument from "./examples/head-to-head-synthetic-v1.manifest.json" with {
   type: "json",
 };
-import scoreDocument from "./results/synthetic-text-v1-opencoi-v0.2.0.score.json" with {
+import { buildHeadToHeadReport, type HeadToHeadProvidedSystemV1 } from "./headToHead.js";
+import publishedHeadToHeadDocument from "./results/head-to-head-synthetic-v1.json" with {
+  type: "json",
+};
+import predictionsDocument from "./results/synthetic-text-v1-opencoi-v0.4.0.predictions.json" with {
+  type: "json",
+};
+import scoreDocument from "./results/synthetic-text-v1-opencoi-v0.4.0.score.json" with {
   type: "json",
 };
 import comparisonSchema from "./schemas/comparison-v1.schema.json" with { type: "json" };
 import corpusSchema from "./schemas/corpus-v1.schema.json" with { type: "json" };
+import manifestSchema from "./schemas/head-to-head-manifest-v1.schema.json" with { type: "json" };
+import reportSchema from "./schemas/head-to-head-report-v1.schema.json" with { type: "json" };
 import predictionSchema from "./schemas/prediction-v1.schema.json" with { type: "json" };
 import scoreSchema from "./schemas/score-v1.schema.json" with { type: "json" };
 import { corpusSha256 } from "./serialization.js";
@@ -49,6 +58,12 @@ function validate(
     return validate(resolvedReference(root, schema.$ref), value, root, path, errors);
   }
   if ("const" in schema && value !== schema.const) errors.push(`${path} violates const`);
+  if (
+    Array.isArray(schema.enum) &&
+    !schema.enum.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value))
+  ) {
+    errors.push(`${path} violates enum`);
+  }
   const type = schema.type;
   const correctType =
     type === undefined ||
@@ -121,7 +136,14 @@ function validate(
   return errors;
 }
 
-const schemas = [corpusSchema, predictionSchema, scoreSchema, comparisonSchema] as JsonSchema[];
+const schemas = [
+  corpusSchema,
+  predictionSchema,
+  scoreSchema,
+  comparisonSchema,
+  manifestSchema,
+  reportSchema,
+] as JsonSchema[];
 
 describe("public benchmark JSON Schema contracts", () => {
   it("is self-contained, strict at the root, and resolves every local reference", () => {
@@ -157,6 +179,20 @@ describe("public benchmark JSON Schema contracts", () => {
         "$.unexpected is not allowed",
       ]),
     );
+  });
+
+  it("accepts the synthetic manifest and its generated machine report", async () => {
+    expect(validate(manifestSchema as JsonSchema, manifestDocument)).toEqual([]);
+    const report = await buildHeadToHeadReport(
+      corpusDocument,
+      manifestDocument,
+      async (_entry: HeadToHeadProvidedSystemV1) => ({
+        value: predictionsDocument,
+        artifactSha256: "d63d21e3ab223ee98d71fce0cd474866307f2c4116617590822c4758270f8963",
+      }),
+    );
+    expect(validate(reportSchema as JsonSchema, report)).toEqual([]);
+    expect(publishedHeadToHeadDocument).toEqual(report);
   });
 
   it("binds published and comparison artifacts to the canonical corpus checksum", () => {

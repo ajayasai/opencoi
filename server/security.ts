@@ -30,6 +30,13 @@ export interface StoredToken {
   tokenHash: string;
 }
 
+/** Build a browser-only fragment URL so the upload bearer is never sent in an HTTP request target. */
+export const publicUploadUrl = (appOrigin: string, token: string): string => {
+  const url = new URL("/upload", appOrigin);
+  url.hash = new URLSearchParams({ token }).toString();
+  return url.toString();
+};
+
 const passwordByteLengthIsValid = (password: string): boolean => {
   const length = Buffer.byteLength(password, "utf8");
   return length >= PASSWORD_MIN_BYTES && length <= PASSWORD_MAX_BYTES;

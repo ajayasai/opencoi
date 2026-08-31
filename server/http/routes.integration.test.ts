@@ -4,6 +4,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { canonicalizeJson } from "../../shared/evidenceBundle.js";
 import { createApp } from "../app.js";
+import { appendAuditEvent } from "../audit.js";
 import type { AppConfig } from "../config.js";
 import {
   bootstrapOrganization,
@@ -12,6 +13,7 @@ import {
   openDatabase,
 } from "../db.js";
 import { hashPassword } from "../security.js";
+import { createServiceAccount } from "../services/serviceAccounts.js";
 import { type DocumentStore, inspectPdf, type StoredDocument } from "../storage.js";
 
 const ORIGIN = "http://localhost:5173";
@@ -35,7 +37,7 @@ class MemoryDocumentStore implements DocumentStore {
       sha256: createHash("sha256").update(bytes).digest("hex"),
       sizeBytes: bytes.byteLength,
       detectedMime: "application/pdf",
-      pageCountEstimate: inspection.pageCountEstimate,
+      pageCount: inspection.pageCountEstimate,
     };
   }
 
@@ -76,6 +78,15 @@ interface LoginResult {
   agent: ReturnType<typeof request.agent>;
   csrf: string;
 }
+
+const uploadTokenFrom = (value: string): string => {
+  const url = new URL(value);
+  const token = new URLSearchParams(url.hash.slice(1)).get("token");
+  if (url.pathname !== "/upload" || !token) throw new Error("Upload URL is malformed");
+  return token;
+};
+
+const uploadAuthorization = (token: string) => ({ Authorization: `UploadLink ${token}` });
 
 describe("OpenCOI API integration", () => {
   let database: OpenCoiDatabase;
@@ -182,6 +193,40 @@ describe("OpenCOI API integration", () => {
       .set("X-CSRF-Token", csrf)
       .send({ name: "With CSRF" })
       .expect(201);
+  });
+
+  it("attributes API audit and dashboard activity to the tenant service account", async () => {
+    const serviceAccount = createServiceAccount(database, {
+      organizationId: "org-a",
+      name: "ERP synchronizer",
+      scopes: ["vendors:write"],
+      createdByUserId: "admin-a",
+      tokenPepper: config.tokenPepper,
+      at: "2026-09-01T01:00:00.000Z",
+    });
+    const event = appendAuditEvent(database, "org-a", {
+      actorType: "system",
+      action: "vendor.created_via_api",
+      entityType: "vendor",
+      entityId: "api-attribution-vendor",
+      occurredAt: "2026-09-01T01:01:00.000Z",
+      metadata: {
+        serviceAccountId: serviceAccount.account.id,
+        serviceAccountSecretId: serviceAccount.secret.id,
+      },
+    });
+    const { agent } = await login();
+
+    const auditResponse = await agent.get("/api/audit").expect(200);
+    expect(
+      auditResponse.body.data.find((record: { id: string }) => record.id === event.id),
+    ).toMatchObject({ actor: "Service account: ERP synchronizer" });
+    const dashboardResponse = await agent.get("/api/dashboard").expect(200);
+    expect(
+      dashboardResponse.body.data.recentActivity.find(
+        (record: { id: string }) => record.id === event.id,
+      ),
+    ).toMatchObject({ actor: "Service account: ERP synchronizer" });
   });
 
   it("requires a workspace slug only after credentials match multiple tenants", async () => {
@@ -488,11 +533,12 @@ describe("OpenCOI API integration", () => {
       },
       disclosure: expect.stringContaining("shown once"),
     });
-    const uploadUrl = new URL(created.body.data.uploadUrl as string);
-    const publicPath = `${uploadUrl.pathname.replace(/^\/upload\//, "/api/public/upload/")}`;
-    await request(app).get(publicPath).expect(200);
+    const token = uploadTokenFrom(created.body.data.uploadUrl as string);
+    const publicPath = "/api/public/upload";
+    await request(app).get(publicPath).set(uploadAuthorization(token)).expect(200);
     const submitted = await request(app)
       .post(publicPath)
+      .set(uploadAuthorization(token))
       .field(
         "metadata",
         JSON.stringify({
@@ -520,7 +566,7 @@ describe("OpenCOI API integration", () => {
       .set("X-CSRF-Token", csrf)
       .send({})
       .expect(409);
-    await request(app).get(publicPath).expect(404);
+    await request(app).get(publicPath).set(uploadAuthorization(token)).expect(404);
   });
 
   it("cancels a tracked request when its generic upload link is revoked", async () => {
@@ -549,10 +595,8 @@ describe("OpenCOI API integration", () => {
         }),
       ]),
     );
-    const uploadUrl = new URL(created.body.data.uploadUrl as string);
-    await request(app)
-      .get(uploadUrl.pathname.replace(/^\/upload\//, "/api/public/upload/"))
-      .expect(404);
+    const token = uploadTokenFrom(created.body.data.uploadUrl as string);
+    await request(app).get("/api/public/upload").set(uploadAuthorization(token)).expect(404);
   });
 
   it("atomically cancels open requests when a vendor is deactivated", async () => {
@@ -564,10 +608,8 @@ describe("OpenCOI API integration", () => {
       .set("X-CSRF-Token", csrf)
       .send({ kind: "initial", deliveryMethod: "manual", ttlDays: 14 })
       .expect(201);
-    const publicPath = new URL(created.body.data.uploadUrl as string).pathname.replace(
-      /^\/upload\//,
-      "/api/public/upload/",
-    );
+    const token = uploadTokenFrom(created.body.data.uploadUrl as string);
+    const publicPath = "/api/public/upload";
 
     try {
       await agent
@@ -587,7 +629,7 @@ describe("OpenCOI API integration", () => {
           }),
         ]),
       );
-      await request(app).get(publicPath).expect(404);
+      await request(app).get(publicPath).set(uploadAuthorization(token)).expect(404);
       expect(
         database
           .prepare(
@@ -846,7 +888,10 @@ describe("OpenCOI API integration", () => {
   });
 
   it("rejects an invalid public token before parsing an upload body", async () => {
-    await request(app).post("/api/public/upload/not-a-real-token").expect(404);
+    await request(app)
+      .post("/api/public/upload")
+      .set(uploadAuthorization("not-a-real-token"))
+      .expect(404);
   });
 
   it("persists reviewer corrections before evaluating a vendor submission", async () => {
@@ -858,15 +903,18 @@ describe("OpenCOI API integration", () => {
       .set("X-CSRF-Token", csrf)
       .send({ ttlDays: 7 })
       .expect(201);
-    const token = new URL(linkResponse.body.data.url as string).pathname
-      .split("/")
-      .at(-1) as string;
-    const context = await request(app).get(`/api/public/upload/${token}`).expect(200);
+    const token = uploadTokenFrom(linkResponse.body.data.url as string);
+    const context = await request(app)
+      .get("/api/public/upload")
+      .set(uploadAuthorization(token))
+      .expect(200);
     expect(context.body.data.vendorName).toBe("=Formula Electric");
     expect(context.headers["cache-control"]).toBe("no-store");
+    expect(context.headers["referrer-policy"]).toBe("no-referrer");
     expect(context.headers.etag).toBeUndefined();
     const submitted = await request(app)
-      .post(`/api/public/upload/${token}`)
+      .post("/api/public/upload")
+      .set(uploadAuthorization(token))
       .field(
         "metadata",
         JSON.stringify({
@@ -911,48 +959,79 @@ describe("OpenCOI API integration", () => {
       },
       confirmedFacts: null,
     });
-    const confirmed = await agent
+    const corrections = {
+      namedInsured: "Formula Electric LLC",
+      issueDate: "2026-01-02",
+      producer: "Correct Broker LLC",
+      certificateHolder: "Organization A",
+      policies: [
+        {
+          coverageType: "COMMERCIAL_GENERAL_LIABILITY",
+          insurer: "Correct Insurance Co",
+          policyNumber: "GL-CORRECTED",
+          effectiveDate: "2026-01-01",
+          expirationDate: "2027-01-01",
+          limits: {
+            EACH_OCCURRENCE: 200_000_000,
+            GENERAL_AGGREGATE: 300_000_000,
+          },
+          endorsements: [
+            {
+              name: "Additional Insured",
+              formCode: "CG 20 10",
+              evidenceLevel: "HUMAN_VERIFIED",
+              sourcePages: [1],
+            },
+          ],
+        },
+        {
+          coverageType: "PROFESSIONAL_LIABILITY",
+          insurer: "Correct Specialty Co",
+          policyNumber: "PRO-CORRECTED",
+          effectiveDate: "2026-01-01",
+          expirationDate: "2027-01-01",
+          limits: { EACH_CLAIM: 500_000_000, AGGREGATE: 1_000_000_000 },
+          endorsements: [],
+        },
+      ],
+    };
+    const invalidPage = await agent
       .put(`/api/certificates/${certificateId}/confirmation`)
       .set("Origin", ORIGIN)
       .set("X-CSRF-Token", csrf)
       .send({
         confirmed: true,
         corrections: {
-          namedInsured: "Formula Electric LLC",
-          issueDate: "2026-01-02",
-          producer: "Correct Broker LLC",
-          certificateHolder: "Organization A",
+          ...corrections,
           policies: [
             {
-              coverageType: "COMMERCIAL_GENERAL_LIABILITY",
-              insurer: "Correct Insurance Co",
-              policyNumber: "GL-CORRECTED",
-              effectiveDate: "2026-01-01",
-              expirationDate: "2027-01-01",
-              limits: {
-                EACH_OCCURRENCE: 200_000_000,
-                GENERAL_AGGREGATE: 300_000_000,
-              },
+              ...corrections.policies[0],
               endorsements: [
                 {
-                  name: "Additional Insured",
-                  formCode: "CG 20 10",
-                  evidenceLevel: "HUMAN_VERIFIED",
+                  ...corrections.policies[0]?.endorsements[0],
+                  sourcePages: [2],
                 },
               ],
             },
-            {
-              coverageType: "PROFESSIONAL_LIABILITY",
-              insurer: "Correct Specialty Co",
-              policyNumber: "PRO-CORRECTED",
-              effectiveDate: "2026-01-01",
-              expirationDate: "2027-01-01",
-              limits: { EACH_CLAIM: 500_000_000, AGGREGATE: 1_000_000_000 },
-              endorsements: [],
-            },
+            corrections.policies[1],
           ],
         },
       })
+      .expect(400);
+    expect(invalidPage.body).toMatchObject({
+      error: "Request validation failed",
+      details: [
+        {
+          path: "policies.0.endorsements.0.sourcePages",
+          message: "Endorsement source page 2 is not present in submitted page metadata",
+        },
+      ],
+    });
+    const confirmed = await agent
+      .put(`/api/certificates/${certificateId}/confirmation`)
+      .set("Origin", ORIGIN)
+      .set("X-CSRF-Token", csrf)
+      .send({ confirmed: true, corrections })
       .expect(200);
     expect(confirmed.body.data).toMatchObject({
       documentStatus: "confirmed",
@@ -980,6 +1059,7 @@ describe("OpenCOI API integration", () => {
           name: "Additional Insured",
           formCode: "CG 20 10",
           evidenceLevel: "HUMAN_VERIFIED",
+          sourcePages: [1],
         },
       ],
     });
@@ -1000,7 +1080,55 @@ describe("OpenCOI API integration", () => {
           expect.objectContaining({ policyNumber: "GL-CORRECTED" }),
         ]),
       },
+      evidence: expect.arrayContaining([
+        expect.objectContaining({
+          kind: "endorsement_page_attestation",
+          endorsementName: "Additional Insured",
+          evidenceLevel: "HUMAN_VERIFIED",
+          sourcePages: [1],
+          sourceDocumentSha256: createHash("sha256").update(PDF).digest("hex"),
+          attestationStatus: "reviewer_attested",
+          attestedByUserId: "admin-a",
+          attestedAt: expect.any(String),
+        }),
+      ]),
     });
+    const confirmedCanonical = canonicalizeJson({
+      schemaVersion: confirmedEvidence.body.schemaVersion,
+      exportedAt: confirmedEvidence.body.exportedAt,
+      payload: confirmedEvidence.body.payload,
+    });
+    const confirmedPublicKey = createPublicKey({
+      key: Buffer.from(confirmedEvidence.body.integrity.signature.publicKeySpki, "base64url"),
+      format: "der",
+      type: "spki",
+    });
+    expect(
+      verify(
+        null,
+        Buffer.from(confirmedCanonical),
+        confirmedPublicKey,
+        Buffer.from(confirmedEvidence.body.integrity.signature.value, "base64url"),
+      ),
+    ).toBe(true);
+    const tamperedPayload = structuredClone(confirmedEvidence.body.payload);
+    const endorsementAttestation = tamperedPayload.evidence.find(
+      (item: { kind?: string }) => item.kind === "endorsement_page_attestation",
+    );
+    endorsementAttestation.sourcePages = [2];
+    const tamperedCanonical = canonicalizeJson({
+      schemaVersion: confirmedEvidence.body.schemaVersion,
+      exportedAt: confirmedEvidence.body.exportedAt,
+      payload: tamperedPayload,
+    });
+    expect(
+      verify(
+        null,
+        Buffer.from(tamperedCanonical),
+        confirmedPublicKey,
+        Buffer.from(confirmedEvidence.body.integrity.signature.value, "base64url"),
+      ),
+    ).toBe(false);
 
     const storedCertificate = database
       .prepare(
@@ -1079,7 +1207,7 @@ describe("OpenCOI API integration", () => {
       .set("X-CSRF-Token", csrf)
       .send({ confirmed: true })
       .expect(409);
-    await request(app).get(`/api/public/upload/${token}`).expect(404);
+    await request(app).get("/api/public/upload").set(uploadAuthorization(token)).expect(404);
   });
 
   it("rejects a pending vendor submission with an audited reason and removes it from review", async () => {
@@ -1098,11 +1226,10 @@ describe("OpenCOI API integration", () => {
       .set("X-CSRF-Token", csrf)
       .send({ ttlDays: 7 })
       .expect(201);
-    const token = new URL(linkResponse.body.data.url as string).pathname
-      .split("/")
-      .at(-1) as string;
+    const token = uploadTokenFrom(linkResponse.body.data.url as string);
     const submitted = await request(app)
-      .post(`/api/public/upload/${token}`)
+      .post("/api/public/upload")
+      .set(uploadAuthorization(token))
       .field(
         "metadata",
         JSON.stringify({

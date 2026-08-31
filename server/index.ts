@@ -5,13 +5,13 @@ import { loadConfig } from "./config.js";
 import { bootstrapOrganization, openDatabase } from "./db.js";
 import { hashPassword } from "./security.js";
 import { runReminderCycle } from "./services/reminders.js";
-import { ensureApiSchema } from "./services/schema.js";
 import { FileSystemDocumentStore } from "./storage.js";
 
 const start = async (): Promise<void> => {
   const config = loadConfig();
-  const database = openDatabase(config.databasePath);
-  ensureApiSchema(database);
+  const database = openDatabase(config.databasePath, { initialize: false });
+  const documentStore = new FileSystemDocumentStore(config.uploadDirectory);
+  const app = createApp({ config, database, documentStore });
   if (config.bootstrap) {
     const passwordHash = await hashPassword(config.bootstrap.administratorPassword);
     bootstrapOrganization(database, {
@@ -22,8 +22,6 @@ const start = async (): Promise<void> => {
       administratorPasswordHash: passwordHash,
     });
   }
-  const documentStore = new FileSystemDocumentStore(config.uploadDirectory);
-  const app = createApp({ config, database, documentStore });
   const server = createServer(app);
   server.listen(config.port, config.host, () => {
     const listenerHost = config.host === "0.0.0.0" ? "localhost" : config.host;

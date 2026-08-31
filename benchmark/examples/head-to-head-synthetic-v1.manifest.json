@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "1.0",
+  "comparisonId": "synthetic-text-v1-public-status",
+  "title": "Synthetic text benchmark: public evidence status",
+  "reportDate": "2026-09-01",
+  "referenceSystemId": "opencoi-shared-parser",
+  "methodology": {
+    "protocol": "Supply vendor-neutral prediction-v1 artifacts generated from the identical frozen page-text corpus, validate them strictly, then score every supplied artifact with the same deterministic scorer. Do not inspect truth while producing new comparator predictions.",
+    "limitations": [
+      "The six-case corpus is original synthetic regression data and is too small for a general accuracy claim.",
+      "The published OpenCOI baseline was not blinded; it is included only to demonstrate the public protocol and evidence status."
+    ]
+  },
+  "systems": [
+    {
+      "system": {
+        "id": "trustlayer",
+        "name": "TrustLayer"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    },
+    {
+      "system": {
+        "id": "opencoi-shared-parser",
+        "name": "OpenCOI shared text parser"
+      },
+      "status": "PROVIDED",
+      "predictionPath": "../results/synthetic-text-v1-opencoi-v0.4.0.predictions.json",
+      "authorization": {
+        "accessAuthorized": true,
+        "publicationPermission": true,
+        "attestedBy": "OpenCOI maintainers",
+        "attestedAt": "2026-09-01T00:00:00Z",
+        "basis": "First-party execution of the AGPL-3.0-only OpenCOI parser against the CC0-1.0 synthetic corpus."
+      },
+      "provenance": {
+        "sourceType": "FIRST_PARTY_RUN",
+        "sourceArtifact": "benchmark/results/synthetic-text-v1-opencoi-v0.4.0.predictions.json",
+        "sourceArtifactSha256": "d63d21e3ab223ee98d71fce0cd474866307f2c4116617590822c4758270f8963",
+        "predictionArtifactSha256": "d63d21e3ab223ee98d71fce0cd474866307f2c4116617590822c4758270f8963",
+        "outputProducedAt": "2026-09-01T00:00:00Z",
+        "runBy": "OpenCOI maintainers",
+        "truthAccess": "NOT_BLINDED",
+        "normalizationMethod": "Direct output from the committed OpenCOI shared-parser adapter; no third-party format translation.",
+        "settings": {
+          "mode": "ZERO_TOUCH_TEXT_PARSE",
+          "timing": "disabled for deterministic output"
+        }
+      }
+    },
+    {
+      "system": {
+        "id": "certfocus",
+        "name": "CertFocus"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    },
+    {
+      "system": {
+        "id": "certificial",
+        "name": "Certificial"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    },
+    {
+      "system": {
+        "id": "smartcompliance",
+        "name": "SmartCompliance"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    },
+    {
+      "system": {
+        "id": "mycoi-illumend",
+        "name": "myCOI / illumend"
+      },
+      "status": "NOT_TESTED",
+      "reason": "No authorized, publishable normalized prediction artifact was supplied."
+    }
+  ]
+}

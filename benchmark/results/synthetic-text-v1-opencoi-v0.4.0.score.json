@@ -1,0 +1,387 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "opencoi-synthetic-text-v1",
+  "corpusSha256": "af737d1acaa50b4c827b78dfeecba30219dc484e0022f869d111381073020012",
+  "system": {
+    "id": "opencoi-shared-parser",
+    "name": "OpenCOI shared text parser",
+    "version": "v0.4.0"
+  },
+  "mode": "ZERO_TOUCH_TEXT_PARSE",
+  "facts": {
+    "truePositive": 63,
+    "falsePositive": 0,
+    "falseNegative": 2,
+    "precision": 1,
+    "recall": 0.969231,
+    "f1": 0.984375
+  },
+  "macroF1": 0.992481,
+  "fields": [
+    {
+      "fieldType": "certificateHolder",
+      "truePositive": 5,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "coverageType",
+      "truePositive": 8,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "effectiveDate",
+      "truePositive": 7,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "endorsementEvidenceLevel",
+      "truePositive": 2,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "endorsementName",
+      "truePositive": 2,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "expirationDate",
+      "truePositive": 7,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "formCode",
+      "truePositive": 1,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "insurerName",
+      "truePositive": 6,
+      "falsePositive": 0,
+      "falseNegative": 2,
+      "precision": 1,
+      "recall": 0.75,
+      "f1": 0.857143
+    },
+    {
+      "fieldType": "limit.AGGREGATE",
+      "truePositive": 1,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "limit.COMBINED_SINGLE_LIMIT",
+      "truePositive": 1,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "limit.DISEASE_EACH_EMPLOYEE",
+      "truePositive": 1,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "limit.DISEASE_POLICY_LIMIT",
+      "truePositive": 1,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "limit.EACH_ACCIDENT",
+      "truePositive": 1,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "limit.EACH_CLAIM",
+      "truePositive": 1,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "limit.EACH_OCCURRENCE",
+      "truePositive": 3,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "limit.GENERAL_AGGREGATE",
+      "truePositive": 2,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "limit.PRODUCTS_COMPLETED_OPERATIONS_AGGREGATE",
+      "truePositive": 1,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "namedInsured",
+      "truePositive": 6,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    },
+    {
+      "fieldType": "policyNumber",
+      "truePositive": 7,
+      "falsePositive": 0,
+      "falseNegative": 0,
+      "precision": 1,
+      "recall": 1,
+      "f1": 1
+    }
+  ],
+  "citations": {
+    "coverage": 63,
+    "correct": 63,
+    "attempted": 63,
+    "truthWithEvidence": 65,
+    "precision": 1,
+    "recall": 0.969231
+  },
+  "warnings": {
+    "truePositive": 4,
+    "falsePositive": 0,
+    "falseNegative": 0,
+    "precision": 1,
+    "recall": 1,
+    "f1": 1
+  },
+  "exactDocuments": 5,
+  "documentCount": 6,
+  "exactDocumentRate": 0.833333,
+  "durationMs": {
+    "reportedCases": 0,
+    "median": 0,
+    "p95": 0
+  },
+  "cases": [
+    {
+      "caseId": "single_page_general_liability",
+      "exactDocument": true,
+      "facts": {
+        "truePositive": 13,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "citations": {
+        "coverage": 13,
+        "correct": 13,
+        "attempted": 13,
+        "truthWithEvidence": 13,
+        "precision": 1,
+        "recall": 1
+      },
+      "warnings": {
+        "truePositive": 0,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      }
+    },
+    {
+      "caseId": "multi_page_auto_with_waiver",
+      "exactDocument": true,
+      "facts": {
+        "truePositive": 10,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "citations": {
+        "coverage": 10,
+        "correct": 10,
+        "attempted": 10,
+        "truthWithEvidence": 10,
+        "precision": 1,
+        "recall": 1
+      },
+      "warnings": {
+        "truePositive": 0,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      }
+    },
+    {
+      "caseId": "two_insurers_two_coverages",
+      "exactDocument": false,
+      "facts": {
+        "truePositive": 14,
+        "falsePositive": 0,
+        "falseNegative": 2,
+        "precision": 1,
+        "recall": 0.875,
+        "f1": 0.933333
+      },
+      "citations": {
+        "coverage": 14,
+        "correct": 14,
+        "attempted": 14,
+        "truthWithEvidence": 16,
+        "precision": 1,
+        "recall": 0.875
+      },
+      "warnings": {
+        "truePositive": 1,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      }
+    },
+    {
+      "caseId": "incomplete_general_liability",
+      "exactDocument": true,
+      "facts": {
+        "truePositive": 4,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "citations": {
+        "coverage": 4,
+        "correct": 4,
+        "attempted": 4,
+        "truthWithEvidence": 4,
+        "precision": 1,
+        "recall": 1
+      },
+      "warnings": {
+        "truePositive": 2,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      }
+    },
+    {
+      "caseId": "workers_and_employers_liability",
+      "exactDocument": true,
+      "facts": {
+        "truePositive": 15,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "citations": {
+        "coverage": 15,
+        "correct": 15,
+        "attempted": 15,
+        "truthWithEvidence": 15,
+        "precision": 1,
+        "recall": 1
+      },
+      "warnings": {
+        "truePositive": 0,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      }
+    },
+    {
+      "caseId": "unclassified_policy",
+      "exactDocument": true,
+      "facts": {
+        "truePositive": 7,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "citations": {
+        "coverage": 7,
+        "correct": 7,
+        "attempted": 7,
+        "truthWithEvidence": 7,
+        "precision": 1,
+        "recall": 1
+      },
+      "warnings": {
+        "truePositive": 1,
+        "falsePositive": 0,
+        "falseNegative": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      }
+    }
+  ]
+}

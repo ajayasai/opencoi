@@ -2,8 +2,8 @@ import "dotenv/config";
 import { randomUUID } from "node:crypto";
 import { loadConfig } from "../config.js";
 import { bootstrapOrganization, createOrganizationRepository, openDatabase } from "../db.js";
+import { migrateDatabase } from "../migrations.js";
 import { hashPassword } from "../security.js";
-import { ensureApiSchema } from "../services/schema.js";
 
 const config = loadConfig();
 if (!config.bootstrap) {
@@ -11,8 +11,8 @@ if (!config.bootstrap) {
     "The explicit db:seed command requires BOOTSTRAP_ORG_* and BOOTSTRAP_ADMIN_* values",
   );
 }
-const database = openDatabase(config.databasePath);
-ensureApiSchema(database);
+const database = openDatabase(config.databasePath, { initialize: false });
+migrateDatabase(database);
 try {
   const passwordHash = await hashPassword(config.bootstrap.administratorPassword);
   const bootstrap = bootstrapOrganization(database, {

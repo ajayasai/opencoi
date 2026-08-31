@@ -173,6 +173,11 @@ export interface CoiEndorsementEvidence {
   readonly formCode?: EvidenceField<string>;
   readonly name?: EvidenceField<string>;
   readonly evidenceLevel: EvidenceField<EndorsementEvidenceLevel>;
+  /**
+   * Exact, one-based pages in the uploaded PDF package that a person identified
+   * as supporting this endorsement record. OCR citations remain separate.
+   */
+  readonly sourcePages?: readonly number[];
 }
 
 export interface CoiDocumentFacts {

@@ -9,6 +9,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { Button, Field, IconButton, Select, TextInput } from "../components/ui";
 import type { CertificateCorrectionInput, CertificateRecord, PolicyRecord } from "../types";
 import { titleCase } from "../utils";
+import { endorsementSourcePagesText, parseEndorsementSourcePages } from "./endorsementSourcePages";
 
 interface LimitDraft {
   id: string;
@@ -21,6 +22,7 @@ interface EndorsementDraft {
   name: string;
   formCode: string;
   evidenceLevel: Exclude<EndorsementEvidenceLevel, "NONE">;
+  sourcePages: string;
 }
 
 interface PolicyCorrectionDraft {
@@ -35,6 +37,7 @@ interface PolicyCorrectionDraft {
 }
 
 export interface CertificateCorrectionDraft {
+  pageCount: number | null;
   namedInsured: string;
   issueDate: string;
   producer: string;
@@ -104,6 +107,7 @@ const endorsementDraftsFor = (policy: PolicyRecord, policyIndex: number): Endors
         name: endorsement.name,
         formCode: endorsement.formCode ?? "",
         evidenceLevel: endorsement.evidenceLevel as Exclude<EndorsementEvidenceLevel, "NONE">,
+        sourcePages: endorsementSourcePagesText(endorsement.sourcePages),
       }));
   }
   return [
@@ -117,12 +121,14 @@ const endorsementDraftsFor = (policy: PolicyRecord, policyIndex: number): Endors
       name,
       formCode: "",
       evidenceLevel: "MENTIONED",
+      sourcePages: "",
     }));
 };
 
 export const correctionDraftFromCertificate = (
   certificate: CertificateRecord,
 ): CertificateCorrectionDraft => ({
+  pageCount: certificate.pageCount,
   namedInsured: certificate.namedInsured,
   issueDate: certificate.issueDate ?? "",
   producer: certificate.producer ?? "",
@@ -152,6 +158,19 @@ export const correctionInputFromDraft = (
 ): CertificateCorrectionInput => {
   const namedInsured = draft.namedInsured.trim();
   if (!namedInsured) throw new Error("Named insured is required before confirmation.");
+  const endorsementInput = (endorsement: EndorsementDraft) => {
+    const sourcePages = parseEndorsementSourcePages(endorsement.sourcePages, {
+      required:
+        endorsement.evidenceLevel === "ATTACHED" || endorsement.evidenceLevel === "HUMAN_VERIFIED",
+      maxPage: draft.pageCount,
+    });
+    return {
+      name: endorsement.name.trim(),
+      ...(endorsement.formCode.trim() ? { formCode: endorsement.formCode.trim() } : {}),
+      evidenceLevel: endorsement.evidenceLevel,
+      ...(sourcePages ? { sourcePages } : {}),
+    };
+  };
   return {
     namedInsured,
     issueDate: draft.issueDate || null,
@@ -175,11 +194,7 @@ export const correctionInputFromDraft = (
         limits,
         endorsements: policy.endorsements
           .filter((endorsement) => endorsement.name.trim())
-          .map((endorsement) => ({
-            name: endorsement.name.trim(),
-            ...(endorsement.formCode.trim() ? { formCode: endorsement.formCode.trim() } : {}),
-            evidenceLevel: endorsement.evidenceLevel,
-          })),
+          .map(endorsementInput),
       };
     }),
   };
@@ -430,7 +445,13 @@ export function CertificateCorrectionEditor({
                       updatePolicy(policyIndex, {
                         endorsements: [
                           ...policy.endorsements,
-                          { id: id(), name: "", formCode: "", evidenceLevel: "MENTIONED" },
+                          {
+                            id: id(),
+                            name: "",
+                            formCode: "",
+                            evidenceLevel: "MENTIONED",
+                            sourcePages: "",
+                          },
                         ],
                       })
                     }
@@ -495,6 +516,30 @@ export function CertificateCorrectionEditor({
                           ),
                         )}
                       </Select>
+                    </Field>
+                    <Field
+                      label="PDF source page(s)"
+                      hint={
+                        endorsement.evidenceLevel === "ATTACHED" ||
+                        endorsement.evidenceLevel === "HUMAN_VERIFIED"
+                          ? "Required; comma separated"
+                          : "Optional; comma separated"
+                      }
+                    >
+                      <TextInput
+                        inputMode="numeric"
+                        value={endorsement.sourcePages}
+                        onChange={(event) =>
+                          updatePolicy(policyIndex, {
+                            endorsements: policy.endorsements.map((item, index) =>
+                              index === endorsementIndex
+                                ? { ...item, sourcePages: event.target.value }
+                                : item,
+                            ),
+                          })
+                        }
+                        placeholder="e.g. 2, 4"
+                      />
                     </Field>
                     <IconButton
                       label={`Remove endorsement ${endorsementIndex + 1}`}

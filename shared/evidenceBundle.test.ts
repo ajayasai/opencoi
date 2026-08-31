@@ -3,6 +3,7 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   assertEvidenceBundleEnvelope,
+  assertEvidenceBundlePayload,
   type CanonicalJsonObject,
   canonicalizeJson,
   type EvidenceBundleEnvelope,
@@ -11,15 +12,63 @@ import {
   verifyEvidenceBundleEnvelope,
 } from "./evidenceBundle.js";
 
-const signedEnvelope = (
-  payload: CanonicalJsonObject = {
-    sourceDocument: { sha256: "a".repeat(64) },
-    decision: { status: "PASS", evidencePages: [1, 3] },
+const EXPORTED_AT = "2026-08-31T12:34:56.789Z";
+
+const validPayload = (sha256 = "a".repeat(64)): CanonicalJsonObject => ({
+  generator: { name: "OpenCOI", version: "0.4.0", origin: "https://coi.example.test" },
+  scope: {
+    organization: { id: "org-1", name: "Example Organization" },
+    vendor: {
+      id: "vendor-1",
+      legalName: "Example Vendor LLC",
+      vendorTypeAtExport: { id: "vendor-type-1", name: "Contractor" },
+    },
+    certificateId: "certificate-1",
   },
-): EvidenceBundleEnvelope => {
+  exportedBy: { id: "user-1", name: "Example Reviewer" },
+  sourceDocument: {
+    id: "document-1",
+    originalFilename: "synthetic.pdf",
+    mimeType: "application/pdf",
+    byteSize: 128,
+    sha256,
+    uploadedAt: "2026-08-30T12:00:00.000Z",
+  },
+  review: {
+    status: "draft",
+    reviewedBy: null,
+    reviewedAt: null,
+    evaluationDate: null,
+    requirementVersion: null,
+    evaluationVendorType: null,
+  },
+  machineProposal: {},
+  confirmedFacts: null,
+  evidence: [],
+  requirementSnapshot: null,
+  findings: [],
+  exceptions: [],
+  statusAtExport: {
+    documentCheck: "needs_review",
+    documentLifecycle: "unknown",
+    asOf: EXPORTED_AT,
+    limitation: "Document assessment only; not live policy verification.",
+  },
+  audit: {
+    organizationChainVerifiedAtExport: true,
+    checkedEvents: 0,
+    error: null,
+    head: null,
+    certificateEvents: [],
+  },
+});
+
+const record = (value: unknown): Record<string, unknown> => value as Record<string, unknown>;
+
+const signedEnvelope = (payload: CanonicalJsonObject = validPayload()): EvidenceBundleEnvelope => {
   const unsigned: UnsignedEvidenceBundle = {
     schemaVersion: "1.0",
-    exportedAt: "2026-08-31T12:34:56.789Z",
+    exportedAt: EXPORTED_AT,
     payload,
   };
   const canonical = canonicalizeJson(unsigned);
@@ -100,7 +149,7 @@ describe("evidence bundle envelope", () => {
 
   it("detects payload and digest tampering independently", async () => {
     const payloadTampered = structuredClone(signedEnvelope());
-    payloadTampered.payload.sourceDocument = { sha256: "b".repeat(64) };
+    record(payloadTampered.payload.scope).certificateId = "certificate-tampered";
     const payloadResult = await verifyEvidenceBundleEnvelope(payloadTampered);
     expect(payloadResult).toMatchObject({
       valid: false,
@@ -184,5 +233,127 @@ describe("evidence bundle envelope", () => {
     expect(() => assertEvidenceBundleEnvelope(nonObjectPayload)).toThrow(
       /payload must be an object/i,
     );
+  });
+
+  it("validates the complete payload shape and rejects unknown or missing fields", () => {
+    const valid = validPayload();
+    expect(() => assertEvidenceBundlePayload(valid, EXPORTED_AT)).not.toThrow();
+
+    const missingField = structuredClone(valid);
+    delete record(missingField).generator;
+    expect(() => assertEvidenceBundlePayload(missingField, EXPORTED_AT)).toThrow(
+      /must contain exactly/i,
+    );
+
+    const unknownNestedField = structuredClone(valid);
+    record(record(unknownNestedField).sourceDocument).unpublished = true;
+    expect(() => assertEvidenceBundlePayload(unknownNestedField, EXPORTED_AT)).toThrow(
+      /sourceDocument must contain exactly/i,
+    );
+  });
+
+  it("enforces review, source-document, endorsement-page, and requirement invariants", () => {
+    const payload = structuredClone(validPayload());
+    const review = record(payload.review);
+    review.status = "confirmed";
+    review.reviewedBy = { id: "reviewer-1", name: "Reviewer One" };
+    review.reviewedAt = "2026-08-31T11:00:00.000Z";
+    review.evaluationDate = "2026-08-31";
+    review.requirementVersion = 2;
+    review.evaluationVendorType = { id: "vendor-type-1", name: "Contractor" };
+    payload.confirmedFacts = {
+      namedInsured: "Example Vendor LLC",
+      issueDate: "2026-08-30",
+      producer: "Example Broker",
+      certificateHolder: "Example Organization",
+      policies: [
+        {
+          endorsements: [
+            {
+              name: "Additional Insured",
+              formCode: "CG 20 10",
+              evidenceLevel: "HUMAN_VERIFIED",
+              sourcePages: [1, 3],
+            },
+          ],
+        },
+      ],
+    };
+    payload.requirementSnapshot = {
+      version: 2,
+      vendorType: { id: "vendor-type-1", name: "Contractor" },
+      evaluatedRuleset: {},
+      publication: null,
+    };
+    payload.evidence = [
+      {
+        kind: "endorsement_page_attestation",
+        policyIndex: 0,
+        endorsementIndex: 0,
+        endorsementName: "Additional Insured",
+        formCode: "CG 20 10",
+        evidenceLevel: "HUMAN_VERIFIED",
+        sourcePages: [1, 3],
+        sourceDocumentSha256: "a".repeat(64),
+        origin: "submitted_endorsement_page_reference",
+        attestationStatus: "reviewer_attested",
+        attestedByUserId: "reviewer-1",
+        attestedAt: "2026-08-31T11:00:00.000Z",
+      },
+    ];
+
+    expect(() => assertEvidenceBundlePayload(payload, EXPORTED_AT)).not.toThrow();
+
+    const wrongHash = structuredClone(payload);
+    record((wrongHash.evidence as CanonicalJsonObject[])[0]).sourceDocumentSha256 = "b".repeat(64);
+    expect(() => assertEvidenceBundlePayload(wrongHash, EXPORTED_AT)).toThrow(
+      /must equal payload\.sourceDocument\.sha256/i,
+    );
+
+    const unsortedPages = structuredClone(payload);
+    record((unsortedPages.evidence as CanonicalJsonObject[])[0]).sourcePages = [3, 1];
+    expect(() => assertEvidenceBundlePayload(unsortedPages, EXPORTED_AT)).toThrow(
+      /strictly increasing/i,
+    );
+
+    const mismatchedReviewer = structuredClone(payload);
+    record((mismatchedReviewer.evidence as CanonicalJsonObject[])[0]).attestedByUserId =
+      "different-reviewer";
+    expect(() => assertEvidenceBundlePayload(mismatchedReviewer, EXPORTED_AT)).toThrow(
+      /reviewer and time must match/i,
+    );
+
+    const danglingPolicy = structuredClone(payload);
+    record((danglingPolicy.evidence as CanonicalJsonObject[])[0]).policyIndex = 1;
+    expect(() => assertEvidenceBundlePayload(danglingPolicy, EXPORTED_AT)).toThrow(
+      /policyIndex must reference/i,
+    );
+
+    const danglingEndorsement = structuredClone(payload);
+    record((danglingEndorsement.evidence as CanonicalJsonObject[])[0]).endorsementIndex = 1;
+    expect(() => assertEvidenceBundlePayload(danglingEndorsement, EXPORTED_AT)).toThrow(
+      /endorsementIndex must reference/i,
+    );
+
+    const contradictoryEndorsement = structuredClone(payload);
+    const policies = record(contradictoryEndorsement.confirmedFacts).policies as unknown[];
+    const endorsements = record(policies[0]).endorsements as unknown[];
+    record(endorsements[0]).sourcePages = [1];
+    expect(() => assertEvidenceBundlePayload(contradictoryEndorsement, EXPORTED_AT)).toThrow(
+      /must exactly match/i,
+    );
+
+    const mismatchedRequirement = structuredClone(payload);
+    record(mismatchedRequirement.requirementSnapshot).version = 3;
+    expect(() => assertEvidenceBundlePayload(mismatchedRequirement, EXPORTED_AT)).toThrow(
+      /must match review\.requirementVersion/i,
+    );
+  });
+
+  it("keeps the legacy keyId label outside v1 signed bytes and treats it as unauthenticated", async () => {
+    const envelope = signedEnvelope();
+    envelope.integrity.signature.keyId = "different-display-label";
+
+    expect(await verifyEvidenceBundleEnvelope(envelope)).toMatchObject({ valid: true });
   });
 });

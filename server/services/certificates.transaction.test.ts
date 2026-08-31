@@ -12,8 +12,9 @@ import {
   getCertificateRequest,
   markCertificateRequestSubmitted,
 } from "./certificateRequests.js";
-import { ingestCertificate } from "./certificates.js";
+import { confirmStoredCertificate, ingestCertificate } from "./certificates.js";
 import { ensureIntegrationSchema } from "./integrationSchema.js";
+import { certificateView } from "./projections.js";
 
 const NOW = new Date("2026-09-01T10:00:00.000Z");
 const PDF = Buffer.from("%PDF-1.7\ntransaction fixture\n", "utf8");
@@ -69,7 +70,7 @@ describe("certificate ingest transaction boundary", () => {
           sha256: createHash("sha256").update(input).digest("hex"),
           sizeBytes: input.byteLength,
           detectedMime: "application/pdf",
-          pageCountEstimate: 1,
+          pageCount: 1,
         };
       },
       async get() {
@@ -127,5 +128,190 @@ describe("certificate ingest transaction boundary", () => {
       submittedCertificateId: null,
     });
     expect(removed).toEqual(["aa/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.pdf"]);
+  });
+
+  it("bounds reviewer endorsement attestations to the server-validated PDF page count", async () => {
+    const repository = createOrganizationRepository(database, "org-a");
+    const ingested = await ingestCertificate({
+      database,
+      repository,
+      documentStore: store,
+      vendorId: "vendor-a",
+      originalFilename: "certificate.pdf",
+      bytes: PDF,
+      metadata: { reviewStatus: "UNCONFIRMED", policies: [] },
+      forceUnconfirmed: true,
+      now: NOW,
+    });
+    const corrections = (sourcePages: number[]) => ({
+      namedInsured: "Vendor A",
+      policies: [
+        {
+          coverageType: "COMMERCIAL_GENERAL_LIABILITY",
+          insurer: "Example Mutual",
+          policyNumber: "GL-100",
+          effectiveDate: "2026-01-01",
+          expirationDate: "2027-01-01",
+          limits: { EACH_OCCURRENCE: 100_000_000 },
+          endorsements: [
+            {
+              name: "Additional Insured",
+              evidenceLevel: "HUMAN_VERIFIED" as const,
+              sourcePages,
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(() =>
+      confirmStoredCertificate({
+        database,
+        repository,
+        certificateId: ingested.certificate.id,
+        reviewerUserId: "admin-a",
+        corrections: corrections([2]),
+        now: NOW,
+      }),
+    ).toThrow("Endorsement source page 2 exceeds the 1-page source PDF");
+    expect(repository.getCertificate(ingested.certificate.id)?.confirmation_status).toBe("draft");
+
+    expect(
+      confirmStoredCertificate({
+        database,
+        repository,
+        certificateId: ingested.certificate.id,
+        reviewerUserId: "admin-a",
+        corrections: corrections([1]),
+        now: NOW,
+      }).certificate.confirmation_status,
+    ).toBe("confirmed");
+  });
+
+  it("rejects client page metadata beyond the server-validated PDF page count", async () => {
+    const repository = createOrganizationRepository(database, "org-a");
+    await expect(
+      ingestCertificate({
+        database,
+        repository,
+        documentStore: store,
+        vendorId: "vendor-a",
+        originalFilename: "certificate.pdf",
+        bytes: PDF,
+        metadata: {
+          reviewStatus: "UNCONFIRMED",
+          pages: [
+            { page: 1, text: "Page one", method: "text_layer" },
+            { page: 2, text: "Invented page", method: "text_layer" },
+          ],
+          policies: [
+            {
+              coverageType: "COMMERCIAL_GENERAL_LIABILITY",
+              endorsements: [
+                {
+                  name: "Additional Insured",
+                  evidenceLevel: "ATTACHED",
+                  sourcePages: [2],
+                },
+              ],
+            },
+          ],
+        },
+        forceUnconfirmed: true,
+        now: NOW,
+      }),
+    ).rejects.toThrow("Submitted extraction page 2 exceeds the 1-page source PDF");
+
+    expect(database.prepare("SELECT count(*) AS count FROM documents").get()).toEqual({ count: 0 });
+    expect(removed).toEqual(["aa/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa.pdf"]);
+  });
+
+  it("refuses to confirm legacy strong evidence without a trusted PDF page count", async () => {
+    const repository = createOrganizationRepository(database, "org-a");
+    const ingested = await ingestCertificate({
+      database,
+      repository,
+      documentStore: store,
+      vendorId: "vendor-a",
+      originalFilename: "legacy.pdf",
+      bytes: PDF,
+      metadata: { reviewStatus: "UNCONFIRMED", policies: [] },
+      forceUnconfirmed: true,
+      now: NOW,
+    });
+    database
+      .prepare("UPDATE documents SET extraction_json = ? WHERE organization_id = ? AND id = ?")
+      .run(
+        JSON.stringify({
+          reviewStatus: "UNCONFIRMED",
+          namedInsured: "Vendor A",
+          rawText: "legacy pending record",
+          policies: [
+            {
+              coverageType: "COMMERCIAL_GENERAL_LIABILITY",
+              endorsements: [{ name: "Additional Insured", evidenceLevel: "HUMAN_VERIFIED" }],
+            },
+          ],
+          _opencoi: { machineProposal: null },
+        }),
+        "org-a",
+        ingested.document.id,
+      );
+
+    expect(() =>
+      confirmStoredCertificate({
+        database,
+        repository,
+        certificateId: ingested.certificate.id,
+        reviewerUserId: "admin-a",
+        now: NOW,
+      }),
+    ).toThrow("cannot be confirmed without a server-validated PDF page count");
+    expect(repository.getCertificate(ingested.certificate.id)?.confirmation_status).toBe("draft");
+  });
+
+  it("never reviewer-attests a legacy extraction citation without a trusted page count", async () => {
+    const repository = createOrganizationRepository(database, "org-a");
+    const ingested = await ingestCertificate({
+      database,
+      repository,
+      documentStore: store,
+      vendorId: "vendor-a",
+      originalFilename: "legacy-citation.pdf",
+      bytes: PDF,
+      metadata: { reviewStatus: "UNCONFIRMED", policies: [] },
+      forceUnconfirmed: true,
+      now: NOW,
+    });
+    database
+      .prepare("UPDATE documents SET extraction_json = ? WHERE organization_id = ? AND id = ?")
+      .run(
+        JSON.stringify({
+          reviewStatus: "CONFIRMED",
+          provenance: [
+            {
+              field: "NAMED_INSURED",
+              extractedValue: "Vendor A",
+              source: "OCR",
+              rawText: "legacy citation without a trusted page tree",
+              page: 99,
+            },
+          ],
+          _opencoi: { machineProposal: null },
+        }),
+        "org-a",
+        ingested.document.id,
+      );
+    database
+      .prepare(
+        `UPDATE certificates
+         SET confirmation_status = 'confirmed', confirmed_by_user_id = ?, confirmed_at = ?
+         WHERE organization_id = ? AND id = ?`,
+      )
+      .run("admin-a", NOW.toISOString(), "org-a", ingested.certificate.id);
+
+    expect(certificateView(database, repository, ingested.certificate.id, NOW)?.evidence).toEqual([
+      expect.objectContaining({ page: 99, attestationStatus: "unverified" }),
+    ]);
   });
 });

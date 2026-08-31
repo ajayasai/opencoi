@@ -267,14 +267,17 @@ export const api = {
     }),
 
   publicUploadContext: (token: string) =>
-    request<PublicUploadContext>(`/api/public/upload/${encodeURIComponent(token)}`),
+    request<PublicUploadContext>("/api/public/upload", {
+      headers: { Authorization: `UploadLink ${token}` },
+    }),
   publicUpload: async (token: string, file: File, metadata: Record<string, unknown>) => {
     const body = new FormData();
     body.append("document", file);
     body.append("metadata", JSON.stringify(metadata));
-    return request<{ receiptId: string; uploadedAt: string }>(
-      `/api/public/upload/${encodeURIComponent(token)}`,
-      { method: "POST", body },
-    );
+    return request<{ receiptId: string; uploadedAt: string }>("/api/public/upload", {
+      method: "POST",
+      headers: { Authorization: `UploadLink ${token}` },
+      body,
+    });
   },
 };

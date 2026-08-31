@@ -21,6 +21,11 @@ export interface OidcStatus {
 export type ServiceAccountScope =
   | "vendors:read"
   | "vendors:write"
+  | "certificates:read"
+  | "certificates:write"
+  | "requests:read"
+  | "requests:write"
+  | "evidence:read"
   | "requirements:read"
   | "compliance:read"
   | "events:read";
@@ -169,6 +174,7 @@ export interface PolicyRecord {
     formCode?: string | null;
     evidenceLevel: EndorsementEvidenceLevel;
     evidence: "indicated" | "document" | "reviewed_document";
+    sourcePages?: number[];
   }>;
 }
 
@@ -188,6 +194,7 @@ export interface CertificateCorrectionInput {
       name: string;
       formCode?: string;
       evidenceLevel: EndorsementEvidenceLevel;
+      sourcePages?: number[];
     }>;
   }>;
 }
@@ -210,6 +217,7 @@ export interface CertificateRecord {
   vendorId: string;
   originalFilename: string;
   sha256: string;
+  pageCount: number | null;
   documentStatus: "pending_review" | "confirmed" | "superseded" | "rejected";
   checkStatus: DocumentCheckStatus;
   lifecycleStatus: LifecycleStatus;
@@ -226,18 +234,35 @@ export interface CertificateRecord {
     reason?: string;
     reviewedAt?: string;
   } | null;
-  evidence?: Array<{
-    field: string;
-    extractedValue: string | number;
-    policyIndex: number | null;
-    endorsementIndex: number | null;
-    limitType: string | null;
-    confidenceBps: number | null;
-    rawText: string;
-    page: number;
-    origin: "client_submitted_extraction";
-    attestationStatus: "unverified" | "reviewer_attested";
-  }>;
+  evidence?: Array<
+    | {
+        kind: "extraction_citation";
+        field: string;
+        extractedValue: string | number;
+        policyIndex: number | null;
+        endorsementIndex: number | null;
+        limitType: string | null;
+        confidenceBps: number | null;
+        rawText: string;
+        page: number;
+        origin: "client_submitted_extraction";
+        attestationStatus: "unverified" | "reviewer_attested";
+      }
+    | {
+        kind: "endorsement_page_attestation";
+        policyIndex: number;
+        endorsementIndex: number;
+        endorsementName: string;
+        formCode: string | null;
+        evidenceLevel: EndorsementEvidenceLevel;
+        sourcePages: number[];
+        sourceDocumentSha256: string;
+        origin: "submitted_endorsement_page_reference";
+        attestationStatus: "reviewer_attested";
+        attestedByUserId: string | null;
+        attestedAt: string | null;
+      }
+  >;
   policies: PolicyRecord[];
   findings: FindingRecord[];
 }

@@ -94,7 +94,7 @@ export function App() {
     <Suspense fallback={<AppLoading />}>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/upload/:token" element={<PublicUploadPage />} />
+        <Route path="/upload" element={<PublicUploadPage />} />
         <Route element={<RequireAuth />}>
           <Route path="/vendors/:vendorId/certificates/new" element={<CertificateReviewPage />} />
           <Route path="/certificates/:certificateId" element={<CertificateDetailPage />} />

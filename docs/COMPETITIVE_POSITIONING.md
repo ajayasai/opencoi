@@ -1,6 +1,6 @@
 # Competitive positioning
 
-**Research reviewed:** 2026-08-31
+**Research reviewed:** 2026-09-01
 
 This document helps contributors describe OpenCOI accurately. It is not a
 procurement recommendation or a complete feature audit. Commercial products
@@ -34,9 +34,10 @@ OpenCOI's strategy is explainability and operator control:
 2. **Human-visible provenance.** OCR proposals, confidence, corrections, and
    reviewers remain distinguishable instead of collapsing into one unexplained
    field.
-3. **Verifiable decision snapshots.** v0.3 persists the evaluated vendor type
-   and normalized ruleset and signs a portable evidence snapshot. The verifier
-   detects alteration; evaluator replay remains separate future work.
+3. **Verifiable decision snapshots.** v0.4 persists the evaluated vendor type
+   and normalized ruleset and signs a portable evidence snapshot. Exact
+   reviewer-attested endorsement pages are bound to the source PDF digest. The
+   verifier detects alteration; evaluator replay remains separate future work.
 4. **Honest exceptions.** A risk owner can approve a scoped, expiring exception
    without rewriting the underlying deficiency into a pass.
 5. **Deployment and data control.** Operators can self-host, choose retention,
@@ -55,16 +56,17 @@ more secure, accurate, usable, or economical.
 
 ## Public artifacts and evidence status
 
-OpenCOI v0.3 publishes artifacts and evidence for several narrower claims:
+OpenCOI v0.4 publishes artifacts and evidence for several narrower claims:
 
 | Question | Public artifact | Result or status |
 | --- | --- | --- |
-| Can its shared text parser be scored reproducibly? | [Corpus, schemas, scorer, and method](../benchmark/README.md) plus [machine-readable output](../benchmark/results/synthetic-text-v1-opencoi-v0.2.0.score.json) | Six original synthetic page-text cases: micro F1 `0.984375`, citation recall `0.969231`, exact documents `5/6`; browser OCR and real documents are not measured. |
-| Are parser failures visible? | Per-case score and [head-to-head status](../benchmark/HEAD_TO_HEAD_STATUS.md) | Two deliberately exposed insurer-assignment false negatives; every commercial comparator is “not tested,” not assigned a fabricated score. |
-| Does endorsement evidence overclaim attachment? | Frozen benchmark and OCR regression tests | Machine text is capped at `MENTIONED`; attachment/human-verification requires a person. |
-| Can a decision snapshot be checked outside the app? | [Evidence-bundle schema and offline verifier](EVIDENCE_BUNDLES.md) plus cryptographic and HTTP integration tests | Canonical payload digest, Ed25519 signature, source-PDF hash, evaluated ruleset, citations, findings, and exceptions are portable. This verifies integrity, not evaluator correctness or organization identity without an independently trusted fingerprint. |
+| Can its shared text parser be scored reproducibly? | [Corpus, schemas, scorer, and method](../benchmark/README.md) plus [machine-readable output](../benchmark/results/synthetic-text-v1-opencoi-v0.4.0.score.json) | Six original synthetic page-text cases: micro F1 `0.984375`, citation recall `0.969231`, exact documents `5/6`; browser OCR and real documents are not measured. |
+| Are parser failures and missing comparators visible? | Per-case score, [head-to-head protocol](../benchmark/HEAD_TO_HEAD.md), and [evidence status](../benchmark/HEAD_TO_HEAD_STATUS.md) | Two deliberately exposed insurer-assignment false negatives; the strict harness checksum-validates supplied artifacts and leaves every unavailable commercial comparator `NOT_TESTED`, never zero. |
+| Does endorsement evidence overclaim attachment? | OCR, confirmation, JSON Schema, bundle-signature, and tamper regression tests | Machine text is capped at `MENTIONED`; new attachment/human-verification claims require exact pages from a person, and reviewer-confirmed attestations are signed with the source-PDF hash. |
+| Can a decision snapshot be checked outside the app? | [Evidence-bundle schema and offline verifier](EVIDENCE_BUNDLES.md) plus cryptographic and HTTP integration tests | Canonical payload digest, Ed25519 signature, source-PDF hash, exact endorsement-page attestations, evaluated ruleset, citations, findings, and exceptions are portable. This verifies integrity, not evaluator correctness or organization identity without an independently trusted fingerprint. |
 | Does the vendor list grow one query per vendor? | [Scale method and output](../benchmark/scale/README.md) plus query-count regression | One aggregate query; the published Windows run reports 10,000 rows at 96.13 ms median / 117.801 ms p95 on the labelled host. It is not a capacity or horizontal-scale claim. |
-| Are standards-based integration interfaces available? | [API/webhook contract](API.md), served OpenAPI 3.1, and integration tests | Scoped service accounts, OIDC, cursor API, idempotency, ETags, ordered events, signatures, retries, dead letters, and SSRF controls are implemented. Breadth against each commercial integration catalog is not established. |
+| Are standards-based integration interfaces available? | [API/webhook contract](API.md), served OpenAPI 3.1, and integration tests | Scoped service accounts, OIDC, unconfirmed certificate PDF intake/read, signed evidence export, request lifecycle operations, cursor pagination, encrypted byte-aware idempotency, ETags, ordered events, signatures, retries, dead letters, and SSRF controls are implemented. Breadth against each commercial integration catalog is not established. |
+| Are upgrades inspectable? | [Migration catalog and operator procedure](DATABASE_MIGRATIONS.md) plus fresh-install, legacy-adoption, drift, rollback, and corruption tests | Every known migration has a stable sequence and SHA-256; plan/check modes are read-only and startup refuses inconsistent or future state. This is operational evidence, not horizontal-scale evidence. |
 | Is real-world usability proven? | [Preregistered protocol and analyzer](../research/usability/README.md) | No participant sessions yet. Synthetic analyzer tests are not usability results. |
 
 These artifacts make OpenCOI's stated claims inspectable and independently testable. This

@@ -118,6 +118,7 @@ describe("loadConfig", () => {
       }),
     ).toThrow(/https/);
     expect(() => loadConfig({ MAX_UPLOAD_MB: "0" })).toThrow(ConfigError);
+    expect(() => loadConfig({ MAX_UPLOAD_MB: "26" })).toThrow(ConfigError);
     expect(() =>
       loadConfig({
         NODE_ENV: "production",

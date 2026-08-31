@@ -8,6 +8,44 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 
 - Follow the evidence-driven priorities in the [roadmap](ROADMAP.md); entries here are not delivery commitments.
 
+## [0.4.0] - 2026-09-01
+
+### Added
+
+- Added exact PDF source-page attestations for endorsement evidence. New `ATTACHED` and `HUMAN_VERIFIED` submissions require canonical page lists, reviewers can open those pages directly, and confirmed signed evidence bundles bind the attestations to the source-document SHA-256 and reviewer identity/time.
+- Expanded `/api/v1` with service-account certificate PDF submission and read operations, signed evidence-bundle export, and tracked certificate-request list, create, read, and cancel operations. Certificate submissions through the API are always unconfirmed and require an authorized human review.
+- Added `certificates:read`, `certificates:write`, `requests:read`, `requests:write`, and `evidence:read` service-account scopes with transactional service-account event attribution.
+- Added a strict, deterministic head-to-head benchmark harness with versioned JSON Schemas, corpus and prediction checksum validation, run provenance, access/publication attestations, identical scoring, a committed v0.4 synthetic baseline/status report, and explicit `NOT_TESTED` rows when no lawful artifact is supplied.
+- Added an ordered SHA-256 database migration ledger plus `db:migrate` apply, read-only plan, and readiness-check modes. Existing complete v0.3 schemas are structurally verified and adopted without rewriting application rows.
+
+### Changed
+
+- API write idempotency now covers the exact uploaded PDF bytes, metadata, and filename for certificate intake, preserves response headers, and encrypts replay payloads at rest when integration credentials are enabled.
+- Database startup and every outbound worker use the same migration catalog and fail closed on checksum mismatch, ledger gaps, unknown future migrations, missing required recorded objects, future schema versions, disabled foreign keys, or integrity violations.
+- Published API documentation now covers the complete integration workflow and narrow scopes rather than only vendor and requirement operations; the checked-in contract is generated from and deep-tested against the exact runtime document.
+
+### Security
+
+- Machine extraction remains capped at endorsement level `MENTIONED`; exact attachment pages are supplied by a person, bounded by a server-parsed PDF page count, and become an attestation only after an authenticated reviewer confirms the original PDF. Legacy pending records without a trusted count cannot acquire strong evidence through confirmation alone.
+- Newly issued vendor upload links place the bearer in a URL fragment, erase it from browser history before API use, and send it through an authorization header to a fixed request path, preventing ordinary browser and proxy request-target logs from recording the token.
+- Bounded in-memory multipart exposure to two simultaneous certificate uploads per process and reduced the configurable upload ceiling to 25 MiB; excess uploads receive a retryable `503` before multipart buffering.
+- PDF intake now requires independent PDF.js and PDF-lib page-tree traversals to agree, rejecting malformed declared-count underreporting before the 75-page limit or endorsement-page bound is trusted.
+- API-created manual upload URLs remain bearer secrets, are returned only on the first idempotent response or its encrypted 24-hour replay, and are never stored as plaintext request records.
+- Vendor and certificate writes plus certificate-request cancellation now return narrow mutation receipts, so a write-only credential or downgraded idempotent replay cannot recover read-scoped resource data.
+- Human-facing audit and activity projections now attribute API actions to the exact tenant-scoped service-account name, with an explicit account-ID fallback, instead of labeling them as generic system activity.
+- The offline evidence verifier now enforces the complete published v1 payload shape and signed cross-field invariants, including exact reviewer, source-document, policy, endorsement, finding, exception, requirement, status, and audit-checkpoint relationships; the exporter applies the same validation before signing.
+- Persisted SMTP failure text now exactly redacts configured usernames and passwords plus their SMTP AUTH base64 forms, in addition to recipient addresses, upload links, bearer tokens, and unrelated URLs.
+- Added migration rollback, required-object drift, future-version, foreign-key corruption, legacy adoption, and fresh-install tests.
+
+### Evidence boundaries
+
+- The head-to-head harness makes lawful comparison reproducible but does not grant access to commercial systems or invent their results. Every commercial comparator remains `NOT_TESTED` until an authorized, publishable artifact exists.
+- No participant usability sessions, production outcomes, managed review service, live insurer connectivity, or horizontal multi-replica deployment are claimed. This release provides stronger public evidence infrastructure; it does not claim universal superiority.
+
+### Upgrade note
+
+- Run `npm run db:migrate -- --plan`, stop web and worker processes, take a verified backup of the database and uploads together, then run `npm run db:migrate` before enabling v0.4 traffic. The additive ledger and idempotency-header schema are compatible with the v0.3 data model, but v0.3 does not understand v0.4 service-account scopes or endorsement page attestations. Outstanding v0.3 path-token upload URLs are intentionally no longer accepted; revoke them and issue fragment-based links after upgrade.
+
 ## [0.3.0] - 2026-08-31
 
 ### Added
@@ -142,7 +180,8 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 - PDF triage is not antivirus or content disarm/reconstruction. Internet-facing operators should add controls appropriate to their threat model.
 - Local accounts are included; SSO, MFA, and managed identity provisioning are not.
 
-[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ajayasai/opencoi/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ajayasai/opencoi/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/ajayasai/opencoi/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/ajayasai/opencoi/compare/v0.2.0...v0.2.1

@@ -1,5 +1,5 @@
 import { createHash, createPrivateKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
-import { canonicalizeJson } from "../../shared/evidenceBundle.js";
+import { assertEvidenceBundlePayload, canonicalizeJson } from "../../shared/evidenceBundle.js";
 import { OPENCOI_VERSION } from "../../shared/version.js";
 import { verifyAuditChain } from "../audit.js";
 import type { OpenCoiDatabase } from "../db.js";
@@ -323,21 +323,36 @@ const auditCheckpoint = (
   };
 };
 
-export const buildSignedEvidenceBundle = (input: {
+type EvidenceBundleExportInput = {
   database: OpenCoiDatabase;
   organizationId: string;
   certificateId: string;
-  exportedByUserId: string;
   appOrigin: string;
   tokenPepper: string | undefined;
   now?: Date;
-}) => {
+} & (
+  | { exportedByUserId: string; exportedByServiceAccount?: never }
+  | {
+      exportedByUserId?: never;
+      exportedByServiceAccount: { id: string; name: string };
+    }
+);
+
+export const buildSignedEvidenceBundle = (input: EvidenceBundleExportInput) => {
   const at = input.now ?? new Date();
   const row = certificateEvidenceRow(input.database, input.organizationId, input.certificateId);
   if (!row) return null;
   const repository = createOrganizationRepository(input.database, input.organizationId);
   const organization = repository.getOrganization();
-  const exporter = repository.getUser(input.exportedByUserId);
+  const exporter = input.exportedByServiceAccount
+    ? {
+        id: `service-account:${input.exportedByServiceAccount.id}`,
+        name: input.exportedByServiceAccount.name,
+      }
+    : (() => {
+        const user = repository.getUser(input.exportedByUserId);
+        return user ? { id: user.id, name: user.display_name } : null;
+      })();
   if (!organization || !exporter) return null;
   const view = certificateView(input.database, repository, input.certificateId, at);
   if (!view) return null;
@@ -385,7 +400,7 @@ export const buildSignedEvidenceBundle = (input: {
         },
         certificateId: row.certificate_id,
       },
-      exportedBy: { id: exporter.id, name: exporter.display_name },
+      exportedBy: exporter,
       sourceDocument: {
         id: row.document_id,
         originalFilename: row.original_filename,
@@ -429,6 +444,7 @@ export const buildSignedEvidenceBundle = (input: {
       audit: auditCheckpoint(input.database, input.organizationId, input.certificateId),
     },
   };
+  assertEvidenceBundlePayload(unsigned.payload, unsigned.exportedAt);
   const canonical = canonicalizeJson(unsigned);
   const digest = createHash("sha256").update(canonical, "utf8").digest("hex");
   const privateKeyPem = decryptSecret(

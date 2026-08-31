@@ -6,6 +6,7 @@ import {
   type OpenCoiDatabase,
   openDatabase,
 } from "../db.js";
+import { publicUploadUrl } from "../security.js";
 import {
   certificateRequestMailTransportOptions,
   runCertificateRequestDeliveryCycle,
@@ -15,6 +16,7 @@ import { ensureIntegrationSchema } from "./integrationSchema.js";
 
 const TOKEN_PEPPER = "certificate-request-delivery-test-pepper-at-least-32-bytes";
 const NOW = new Date("2026-09-01T10:00:00.000Z");
+const ACTIVE_UPLOAD_TOKEN = `v1.b3JnLWE.${"x".repeat(48)}`;
 const config: AppConfig = {
   environment: "test",
   host: "127.0.0.1",
@@ -63,7 +65,7 @@ describe("certificate request SMTP delivery", () => {
     createCertificateRequest(database, {
       organizationId: "org-a",
       vendorId: "vendor-a",
-      uploadToken: `v1.b3JnLWE.${"x".repeat(48)}`,
+      uploadToken: ACTIVE_UPLOAD_TOKEN,
       expiresAt: "2026-09-15T10:00:00.000Z",
       kind: "initial",
       deliveryMethod: "smtp",
@@ -105,7 +107,7 @@ describe("certificate request SMTP delivery", () => {
     expect(sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
         subject: "Insurance certificate requested",
-        text: expect.stringContaining("https://coi.example.test/upload/v1.b3JnLWE."),
+        text: expect.stringContaining("https://coi.example.test/upload#token=v1.b3JnLWE."),
       }),
     );
     expect(sendMail.mock.calls[0]?.[0].subject).not.toContain("Vendor A");
@@ -136,6 +138,49 @@ describe("certificate request SMTP delivery", () => {
     expect(request).toMatchObject({ deliveryStatus: "failed", deliverySecretAvailable: true });
     expect(request?.deliveryError).not.toContain("vendor@example.test");
     expect(request?.nextAttemptAt).toBe("2026-09-01T10:15:00.000Z");
+  });
+
+  it("redacts SMTP credentials, bearer links, tokens, and URLs from persisted failures", async () => {
+    const activeUploadUrl = publicUploadUrl(config.appOrigin, ACTIVE_UPLOAD_TOKEN);
+    const serviceToken = "ocoi_sk_123e4567-e89b-12d3-a456-426614174000.secret-part-ending-";
+    const unrelatedUrl = "https://smtp.example.test/debug?id=trace-secret";
+    const smtpUser = "smtp-user-secret";
+    const smtpPassword = "smtp-password-secret";
+    const encodedPassword = Buffer.from(smtpPassword, "utf8").toString("base64");
+    const authPlain = Buffer.from(`\0${smtpUser}\0${smtpPassword}`, "utf8").toString("base64");
+    const credentialConfig: AppConfig = {
+      ...config,
+      smtp: {
+        ...(config.smtp as NonNullable<AppConfig["smtp"]>),
+        user: smtpUser,
+        password: smtpPassword,
+      },
+    };
+    const error = Object.assign(
+      new Error(
+        `SMTP echoed user=${smtpUser} password=${smtpPassword} encoded=${encodedPassword} auth=${authPlain}; ${activeUploadUrl} and ${ACTIVE_UPLOAD_TOKEN}; Authorization: Bearer ${serviceToken}; diagnostics ${unrelatedUrl}`,
+      ),
+      { code: "ETIMEDOUT" },
+    );
+
+    await runCertificateRequestDeliveryCycle(database, credentialConfig, {
+      now: () => NOW,
+      maxBatch: 1,
+      transport: { sendMail: vi.fn().mockRejectedValue(error), close: vi.fn() },
+    });
+
+    const persisted = getCertificateRequest(database, "org-a", "request-a")?.deliveryError;
+    expect(persisted).toContain("[secret redacted]");
+    expect(persisted).toContain("[service token redacted]");
+    expect(persisted).toContain("[url redacted]");
+    expect(persisted).not.toContain(activeUploadUrl);
+    expect(persisted).not.toContain(ACTIVE_UPLOAD_TOKEN);
+    expect(persisted).not.toContain(serviceToken);
+    expect(persisted).not.toContain(unrelatedUrl);
+    expect(persisted).not.toContain(smtpUser);
+    expect(persisted).not.toContain(smtpPassword);
+    expect(persisted).not.toContain(encodedPassword);
+    expect(persisted).not.toContain(authPlain);
   });
 
   it("cancels an inactive vendor request before any bearer link reaches SMTP", async () => {

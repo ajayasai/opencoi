@@ -282,7 +282,7 @@ export const loadConfig = (
     workingDirectory,
     readString(environment, "DATA_DIR", "./data"),
   );
-  const maxUploadMegabytes = readInteger(environment, "MAX_UPLOAD_MB", 15, 1, 100);
+  const maxUploadMegabytes = readInteger(environment, "MAX_UPLOAD_MB", 15, 1, 25);
   const sessionTtlHours = readInteger(environment, "SESSION_TTL_HOURS", 12, 1, 24 * 31);
   const uploadLinkTtlDays = readInteger(environment, "UPLOAD_LINK_TTL_DAYS", 14, 1, 365);
   const tokenPepper = readOptionalString(environment, "TOKEN_PEPPER");

@@ -3,6 +3,7 @@ import { appendAuditEvent } from "../audit.js";
 import type { AppConfig } from "../config.js";
 import type { OpenCoiDatabase } from "../db.js";
 import { createOrganizationRepository } from "../db.js";
+import { publicUploadUrl } from "../security.js";
 import {
   cancelOpenCertificateRequest,
   claimCertificateRequestDelivery,
@@ -45,11 +46,36 @@ const transientFailure = (error: unknown): boolean => {
   return true;
 };
 
-const safeError = (error: unknown): string =>
-  (error instanceof Error ? error.message : "SMTP submission failed")
-    .replace(/[\r\n\t]+/g, " ")
+const redactLiteral = (value: string, secret: string): string =>
+  secret ? value.split(secret).join("[secret redacted]") : value;
+
+const smtpCredentialSecrets = (user?: string, password?: string): string[] => {
+  const clear = [user, password].filter(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  );
+  const encoded = clear.map((value) => Buffer.from(value, "utf8").toString("base64"));
+  const authPlain =
+    user && password ? [Buffer.from(`\0${user}\0${password}`, "utf8").toString("base64")] : [];
+  return [...new Set([...clear, ...encoded, ...authPlain])];
+};
+
+const safeError = (error: unknown, exactSecrets: readonly string[] = []): string => {
+  let message = (error instanceof Error ? error.message : "SMTP submission failed").replace(
+    /[\r\n\t]+/g,
+    " ",
+  );
+  for (const secret of [...exactSecrets].sort((left, right) => right.length - left.length)) {
+    message = redactLiteral(message, secret);
+  }
+  return message
+    .replace(
+      /\bocoi_sk_[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+(?=$|[^A-Za-z0-9_-])/g,
+      "[service token redacted]",
+    )
+    .replace(/https?:\/\/[^\s<>"']+/gi, "[url redacted]")
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[email redacted]")
     .slice(0, 300);
+};
 
 const withDeadline = async <T>(work: Promise<T>): Promise<T> => {
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -212,7 +238,7 @@ export const runCertificateRequestDeliveryCycle = async (
           if (recorded) result.failed += 1;
           continue;
         }
-        const uploadUrl = `${config.appOrigin}/upload/${claimed.uploadToken}`;
+        const uploadUrl = publicUploadUrl(config.appOrigin, claimed.uploadToken);
         let submissionFailure: { error: unknown } | null = null;
         try {
           await withDeadline(
@@ -246,7 +272,11 @@ export const runCertificateRequestDeliveryCycle = async (
               requestId: claimed.request.id,
               claimToken: claimed.claimToken,
               accepted: false,
-              errorMessage: safeError(submissionFailure.error),
+              errorMessage: safeError(submissionFailure.error, [
+                uploadUrl,
+                claimed.uploadToken,
+                ...smtpCredentialSecrets(config.smtp?.user, config.smtp?.password),
+              ]),
               retryAt,
               at: completedAt.toISOString(),
             });

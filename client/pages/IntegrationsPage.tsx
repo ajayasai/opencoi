@@ -36,6 +36,11 @@ import "./pages.css";
 const scopeOptions: Array<{ value: ServiceAccountScope; label: string }> = [
   { value: "vendors:read", label: "Read vendors" },
   { value: "vendors:write", label: "Create and update vendors" },
+  { value: "certificates:read", label: "Read certificate records" },
+  { value: "certificates:write", label: "Submit certificates for human review" },
+  { value: "requests:read", label: "Read certificate requests" },
+  { value: "requests:write", label: "Create and cancel certificate requests" },
+  { value: "evidence:read", label: "Export signed evidence bundles" },
   { value: "requirements:read", label: "Read requirements" },
   { value: "compliance:read", label: "Read document compliance" },
   { value: "events:read", label: "Read ordered events" },

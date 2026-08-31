@@ -1,4 +1,5 @@
 import { type EndorsementEvidenceLevel, LIMIT_TYPES, type LimitType } from "../../shared/domain.js";
+import { auditActorLabel } from "../audit.js";
 import type {
   CertificateRow,
   DocumentRow,
@@ -522,6 +523,22 @@ const findingView = (
   };
 };
 
+const canonicalSourcePages = (value: unknown): number[] | undefined => {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 100) return undefined;
+  if (
+    value.some(
+      (page, index) =>
+        !Number.isSafeInteger(page) ||
+        Number(page) < 1 ||
+        Number(page) > 100 ||
+        (index > 0 && Number(value[index - 1]) >= Number(page)),
+    )
+  ) {
+    return undefined;
+  }
+  return value.map(Number);
+};
+
 const policyView = (row: PolicyRow) => {
   const metadata = parseJson<{
     limits?: Record<string, number>;
@@ -529,6 +546,7 @@ const policyView = (row: PolicyRow) => {
       name: string;
       formCode?: string;
       evidenceLevel?: EndorsementEvidenceLevel;
+      sourcePages?: number[];
     }>;
     currency?: string;
   }>(row.metadata_json, {});
@@ -553,17 +571,21 @@ const policyView = (row: PolicyRow) => {
     additionalInsured: row.additional_insured === 1,
     waiverOfSubrogation: row.waiver_of_subrogation === 1,
     primaryNoncontributory: row.primary_noncontributory === 1,
-    endorsements: (metadata.endorsements ?? []).map((endorsement) => ({
-      name: endorsement.name,
-      formCode: endorsement.formCode ?? null,
-      evidenceLevel: endorsement.evidenceLevel ?? "MENTIONED",
-      evidence:
-        endorsement.evidenceLevel === "HUMAN_VERIFIED"
-          ? "reviewed_document"
-          : endorsement.evidenceLevel === "ATTACHED" || endorsement.evidenceLevel === "SCHEDULED"
-            ? "document"
-            : "indicated",
-    })),
+    endorsements: (metadata.endorsements ?? []).map((endorsement) => {
+      const sourcePages = canonicalSourcePages(endorsement.sourcePages);
+      return {
+        name: endorsement.name,
+        formCode: endorsement.formCode ?? null,
+        evidenceLevel: endorsement.evidenceLevel ?? "MENTIONED",
+        ...(sourcePages ? { sourcePages } : {}),
+        evidence:
+          endorsement.evidenceLevel === "HUMAN_VERIFIED"
+            ? "reviewed_document"
+            : endorsement.evidenceLevel === "ATTACHED" || endorsement.evidenceLevel === "SCHEDULED"
+              ? "document"
+              : "indicated",
+      };
+    }),
   };
 };
 
@@ -585,6 +607,7 @@ export const certificateView = (
   if (!row) return null;
   const policies = repository.listPolicies(row.id);
   const extraction = parseJson<{
+    pages?: Array<{ page?: number }>;
     certificateHolder?: string | null;
     provenance?: Array<{
       field?: string;
@@ -600,6 +623,7 @@ export const certificateView = (
     _opencoi?: {
       evaluationDate?: string;
       requirementVersion?: number | null;
+      sourceDocumentPageCount?: number;
       evaluationVendorType?: { id?: string; name?: string };
       evaluatedRuleset?: unknown;
       reviewDecision?: {
@@ -609,7 +633,15 @@ export const certificateView = (
       };
     };
   }>(row.extraction_json, {});
-  const evidence = (extraction.provenance ?? [])
+  const sourceDocumentPageCount =
+    Number.isSafeInteger(extraction._opencoi?.sourceDocumentPageCount) &&
+    Number(extraction._opencoi?.sourceDocumentPageCount) >= 1 &&
+    Number(extraction._opencoi?.sourceDocumentPageCount) <= 100
+      ? Number(extraction._opencoi?.sourceDocumentPageCount)
+      : null;
+  const humanConfirmed = ["confirmed", "superseded"].includes(row.confirmation_status);
+  const projectedPolicies = policies.map(policyView);
+  const extractionEvidence = (extraction.provenance ?? [])
     .filter(
       (citation) =>
         typeof citation.field === "string" &&
@@ -620,6 +652,7 @@ export const certificateView = (
         Number(citation.page) > 0,
     )
     .map((citation) => ({
+      kind: "extraction_citation" as const,
       field: citation.field as string,
       extractedValue: citation.extractedValue ?? "",
       policyIndex: citation.policyIndex ?? null,
@@ -630,10 +663,38 @@ export const certificateView = (
       page: citation.page as number,
       origin: "client_submitted_extraction" as const,
       attestationStatus:
-        row.confirmation_status === "confirmed"
+        humanConfirmed &&
+        sourceDocumentPageCount !== null &&
+        Number(citation.page) <= sourceDocumentPageCount
           ? ("reviewer_attested" as const)
           : ("unverified" as const),
     }));
+  const endorsementPageEvidence = projectedPolicies.flatMap((policy, policyIndex) =>
+    policy.endorsements.flatMap((endorsement, endorsementIndex) =>
+      humanConfirmed &&
+      sourceDocumentPageCount !== null &&
+      endorsement.sourcePages?.length &&
+      endorsement.sourcePages.every((page) => page <= sourceDocumentPageCount)
+        ? [
+            {
+              kind: "endorsement_page_attestation" as const,
+              policyIndex,
+              endorsementIndex,
+              endorsementName: endorsement.name,
+              formCode: endorsement.formCode,
+              evidenceLevel: endorsement.evidenceLevel,
+              sourcePages: endorsement.sourcePages,
+              sourceDocumentSha256: row.sha256,
+              origin: "submitted_endorsement_page_reference" as const,
+              attestationStatus: "reviewer_attested" as const,
+              attestedByUserId: row.confirmed_by_user_id,
+              attestedAt: row.confirmed_at,
+            },
+          ]
+        : [],
+    ),
+  );
+  const evidence = [...extractionEvidence, ...endorsementPageEvidence];
   const vendor = repository.getVendor(row.vendor_id);
   const lifecycleStatus = lifecycleFor(
     row,
@@ -646,6 +707,7 @@ export const certificateView = (
     vendorId: row.vendor_id,
     originalFilename: row.original_filename,
     sha256: row.sha256,
+    pageCount: sourceDocumentPageCount,
     documentStatus:
       row.confirmation_status === "superseded"
         ? "superseded"
@@ -678,7 +740,7 @@ export const certificateView = (
     evaluationDate: extraction._opencoi?.evaluationDate ?? null,
     reviewDecision: extraction._opencoi?.reviewDecision ?? null,
     evidence,
-    policies: policies.map(policyView),
+    policies: projectedPolicies,
     findings: repository
       .listFindings(row.id)
       .map((finding) => findingView(database, repository, finding, now.toISOString())),
@@ -766,9 +828,12 @@ export const dashboardView = (
     });
   const recentRows = database
     .prepare(
-      `SELECT a.*, u.display_name
+      `SELECT a.*, u.display_name, sa.name AS service_account_name
        FROM audit_events a
        LEFT JOIN users u ON u.organization_id = a.organization_id AND u.id = a.actor_user_id
+       LEFT JOIN service_accounts sa
+         ON sa.organization_id = a.organization_id
+        AND sa.id = json_extract(a.metadata_json, '$.serviceAccountId')
        WHERE a.organization_id = ? ORDER BY a.sequence_number DESC LIMIT 12`,
     )
     .all(repository.organizationId) as Array<Record<string, unknown>>;
@@ -784,12 +849,18 @@ export const dashboardView = (
     recentActivity: recentRows.map((row) => ({
       id: String(row.id),
       action: String(row.action),
-      actor:
-        typeof row.display_name === "string"
-          ? row.display_name
-          : row.actor_type === "vendor"
-            ? "Vendor uploader"
-            : "OpenCOI",
+      actor: auditActorLabel(
+        {
+          actor_type: String(row.actor_type) as "user" | "vendor" | "system",
+          actor_user_id: typeof row.actor_user_id === "string" ? row.actor_user_id : null,
+          metadata_json: String(row.metadata_json),
+        },
+        {
+          userName: typeof row.display_name === "string" ? row.display_name : undefined,
+          serviceAccountName:
+            typeof row.service_account_name === "string" ? row.service_account_name : undefined,
+        },
+      ),
       target: `${String(row.entity_type)}${row.entity_id ? ` ${String(row.entity_id)}` : ""}`,
       createdAt: String(row.occurred_at),
     })),

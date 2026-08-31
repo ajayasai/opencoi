@@ -325,11 +325,19 @@ export const getCertificateRequest = (
 export const listCertificateRequests = (
   database: OpenCoiDatabase,
   organizationId: string,
-  options: { vendorId?: string; limit?: number } = {},
+  options: { vendorId?: string; limit?: number; before?: { createdAt: string; id: string } } = {},
 ): CertificateRequestRecord[] => {
   const limit = options.limit ?? 100;
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
     throw new RangeError("Certificate request list limit must be between 1 and 500");
+  }
+  if (
+    options.before &&
+    (Number.isNaN(Date.parse(options.before.createdAt)) ||
+      !options.before.id ||
+      options.before.id.length > 128)
+  ) {
+    throw new TypeError("Certificate request cursor is invalid");
   }
   const rows = database
     .prepare(
@@ -339,12 +347,20 @@ export const listCertificateRequests = (
        JOIN upload_links l
          ON l.organization_id = r.organization_id AND l.id = r.upload_link_id
        WHERE r.organization_id = ? AND (? IS NULL OR r.vendor_id = ?)
+         AND (
+           ? IS NULL OR r.created_at < ? OR
+           (r.created_at = ? AND r.id < ?)
+         )
        ORDER BY r.created_at DESC, r.id DESC LIMIT ?`,
     )
     .all(
       organizationId,
       options.vendorId ?? null,
       options.vendorId ?? null,
+      options.before?.createdAt ?? null,
+      options.before?.createdAt ?? null,
+      options.before?.createdAt ?? null,
+      options.before?.id ?? null,
       limit,
     ) as unknown as JoinedCertificateRequestRow[];
   return rows.map(recordFrom);

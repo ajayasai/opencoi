@@ -88,6 +88,8 @@ The archive preserves the container user's numeric ownership. If a storage drive
 ## Post-restore validation
 
 - Confirm the container becomes healthy without schema or permission errors.
+- Run `node dist/server/cli/migrate.js --check` in the restored release and
+  confirm every checksummed migration is recorded and structurally present.
 - Sign in with an administrator account.
 - Open several synthetic vendor and certificate records and confirm their files are retrievable.
 - Verify requirement evaluations, exception history, exports, and audit events.

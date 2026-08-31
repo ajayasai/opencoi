@@ -1,10 +1,13 @@
 # OpenCOI API v1 and webhooks
 
-OpenCOI v0.3 exposes a versioned machine-to-machine API at `/api/v1`. It is
+OpenCOI v0.4 exposes a versioned machine-to-machine API at `/api/v1`. It is
 separate from the browser's cookie-authenticated `/api` routes. The served
 OpenAPI 3.1 description is available without authentication at
 `/api/v1/openapi.json`; the source description is in
-[`api/openapi-v1.yaml`](api/openapi-v1.yaml).
+[`api/openapi-v1.yaml`](api/openapi-v1.yaml). The checked-in file is
+deterministically generated as JSON, which is valid YAML 1.2, from the exact
+runtime document. `npm run openapi:verify` rejects drift and
+`npm run openapi:generate` intentionally refreshes it.
 
 ## Authentication and tenant boundary
 
@@ -28,9 +31,23 @@ Scopes are deliberately small:
 | --- | --- |
 | `vendors:read` | List and get vendors. |
 | `vendors:write` | Create and update vendors. |
+| `certificates:read` | Read a certificate assessment, including facts, evidence, and findings. |
+| `certificates:write` | Submit a PDF and extraction proposal into mandatory human review. |
+| `requests:read` | List and read tracked initial or renewal requests. |
+| `requests:write` | Create and cancel tracked initial or renewal requests. |
+| `evidence:read` | Export a signed, portable evidence bundle. |
 | `requirements:read` | Read vendor types and their active rules. |
 | `compliance:read` | Read the latest uploaded-document result, findings, and policy facts. |
 | `events:read` | Read the tenant's ordered domain-event feed. |
+
+Creating a request normally needs only `requests:write`. If the request names
+`sourceCertificateId`, it also needs `certificates:read`; this prevents the
+write operation from becoming a certificate-existence oracle.
+
+Vendor create/update, certificate-upload, and certificate-request cancellation
+operations return non-sensitive mutation receipts. Reading the resulting
+resource requires the corresponding read scope; idempotent replays preserve the
+receipt and cannot recover a fuller response after a scope downgrade.
 
 ## Stable behavior
 
@@ -41,7 +58,13 @@ Scopes are deliberately small:
 - Collection endpoints use opaque/cursor pagination with a maximum page of 100.
 - `POST` and `PATCH` require an `Idempotency-Key` of 8–128 permitted
   characters. The same key and exact request return the original response for
-  24 hours; reusing it for different input returns `409`.
+  24 hours; reusing it for different input returns `409`. A replay includes
+  `Idempotent-Replayed: true`.
+- Multipart certificate idempotency covers the canonical metadata, original
+  filename, byte size, and SHA-256 of the exact PDF bytes—not merely its form
+  fields. When `TOKEN_PEPPER` is configured, stored replay bodies are encrypted
+  with record-bound authenticated encryption. This keeps a manual request's
+  one-time upload URL out of plaintext idempotency storage.
 - A vendor `GET` supplies an `ETag`. `PATCH` requires that value in `If-Match`;
   missing and stale preconditions return `428` and `412`, respectively.
 - Dates are ISO 8601 strings and monetary limits are non-negative integer minor
@@ -65,10 +88,52 @@ curl --fail-with-body \
   https://coi.example.com/api/v1/vendors
 ```
 
+Submit a PDF from another system. Even if metadata claims `CONFIRMED`, the API
+forces it to `UNCONFIRMED`; a human reviewer must compare it with the original
+before it can satisfy a rule.
+
+```sh
+curl --fail-with-body \
+  -X POST \
+  -H "Authorization: Bearer $OPENCOI_TOKEN" \
+  -H "Idempotency-Key: erp-certificate-18421-v1" \
+  -F 'metadata={"namedInsured":"Example Electrical LLC","policies":[]}' \
+  -F 'document=@certificate.pdf;type=application/pdf' \
+  https://coi.example.com/api/v1/vendors/00000000-0000-4000-8000-000000000001/certificates
+```
+
+Tracked requests are also available through the stable API:
+
+```sh
+curl --fail-with-body \
+  -X POST \
+  -H "Authorization: Bearer $OPENCOI_TOKEN" \
+  -H "Idempotency-Key: erp-renewal-18421-v1" \
+  -H "Content-Type: application/json" \
+  --data '{"kind":"renewal","deliveryMethod":"manual","ttlDays":14}' \
+  https://coi.example.com/api/v1/vendors/00000000-0000-4000-8000-000000000001/certificate-requests
+```
+
+The returned manual upload URL is a bearer secret. Its token is in the URL
+fragment, which browsers do not send in the HTTP request target; OpenCOI's
+public page removes the fragment from history and uses an `Authorization:
+UploadLink …` header against a fixed API path. OpenCOI encrypts its idempotent
+replay response and makes that exact response available for 24 hours; clients
+must still restrict response/body and authorization-header logs and share the
+URL only with the intended recipient. SMTP responses mean acceptance by the
+configured SMTP service, not inbox delivery or opening.
+
+Signed evidence bundles are available from
+`GET /api/v1/certificates/{certificateId}/evidence-bundle`. The response covers
+the source-document hash, exact page-addressed endorsement attestations,
+reviewed facts, rule snapshot, findings, exceptions, and audit checkpoint with
+an Ed25519 signature. Export requires `TOKEN_PEPPER` of at least 32 bytes and
+returns `503` when secure signing-key protection is unavailable.
+
 ## Domain events and webhooks
 
 Business events are appended in an organization-scoped sequence and fanned out
-through a transactional outbox. Current v0.3 workflows emit:
+through a transactional outbox. Current v0.4 workflows emit:
 
 - `vendor.created`
 - `vendor.updated`
@@ -88,10 +153,10 @@ through a transactional outbox. Current v0.3 workflows emit:
 The model accepts additional exact event types as workflows adopt it. An
 endpoint can subscribe to exact types or `*`.
 
-Certificate-request management and evidence-bundle export remain
-cookie-authenticated `/api` browser surfaces in v0.3, not stable `/api/v1`
-operations. Their domain events are available through the ordered event feed
-and matching webhook subscriptions.
+Certificate submission, certificate-request management, certificate reads, and
+signed evidence-bundle export are stable `/api/v1` operations in v0.4. Browser
+routes remain available to the first-party client but are not the integration
+contract.
 
 Delivery follows the [Standard Webhooks](https://www.standardwebhooks.com/)
 signature convention over the exact UTF-8 JSON body:

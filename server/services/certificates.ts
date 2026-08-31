@@ -41,6 +41,32 @@ const optionalIsoDate = z
 
 const limitValueSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const limitsSchema = z.partialRecord(z.enum(LIMIT_TYPES), limitValueSchema).default({});
+const sourcePagesSchema = z
+  .array(z.number().int().min(1).max(100))
+  .max(100)
+  .optional()
+  .superRefine((pages, context) => {
+    if (!pages) return;
+    for (let index = 0; index < pages.length; index += 1) {
+      const previous = pages[index - 1];
+      const current = pages[index];
+      if (previous !== undefined && current !== undefined && previous >= current) {
+        context.addIssue({
+          code: "custom",
+          path: [index],
+          message: "Source pages must be unique and sorted in ascending order",
+        });
+      }
+    }
+  });
+
+const endorsementSchema = z.object({
+  name: z.string().trim().min(1).max(300),
+  evidenceLevel: z.enum(ENDORSEMENT_EVIDENCE_LEVELS).default("MENTIONED"),
+  formCode: z.string().trim().min(1).max(100).optional(),
+  sourcePages: sourcePagesSchema,
+});
+
 const extractedPageSchema = z
   .object({
     page: z.number().int().min(1).max(100),
@@ -84,20 +110,11 @@ const policySchema = z
     effectiveDate: optionalIsoDate,
     expirationDate: optionalIsoDate,
     limits: limitsSchema,
-    endorsements: z
-      .array(
-        z.object({
-          name: z.string().trim().min(1).max(300),
-          evidenceLevel: z.enum(ENDORSEMENT_EVIDENCE_LEVELS).default("MENTIONED"),
-          formCode: z.string().trim().min(1).max(100).optional(),
-        }),
-      )
-      .max(100)
-      .default([]),
+    endorsements: z.array(endorsementSchema).max(100).default([]),
   })
   .passthrough();
 
-export const certificateMetadataSchema = z
+const certificateMetadataObjectSchema = z
   .object({
     extractionVersion: z.string().trim().max(100).optional(),
     extractionMethod: z.string().trim().max(100).optional(),
@@ -111,83 +128,131 @@ export const certificateMetadataSchema = z
     provenance: z.array(provenanceSchema).max(2_000).default([]),
     policies: z.array(policySchema).max(50).default([]),
   })
-  .passthrough()
-  .superRefine((metadata, context) => {
-    const pages = metadata.pages ?? [];
-    const pageMap = new Map<number, Set<string>>();
-    let submittedPageCharacters = 0;
-    for (const [index, page] of pages.entries()) {
-      submittedPageCharacters += page.text.length;
-      if (pageMap.has(page.page)) {
-        context.addIssue({
-          code: "custom",
-          path: ["pages", index, "page"],
-          message: `Page ${page.page} is duplicated`,
-        });
-        continue;
-      }
-      pageMap.set(
-        page.page,
-        new Set(
-          normalizeOcrText(page.text)
-            .split("\n")
-            .map((line) => line.trim())
-            .filter(Boolean),
-        ),
-      );
-    }
-    if (submittedPageCharacters > 2_000_000) {
+  .passthrough();
+
+const validateCertificateMetadata = (
+  metadata: z.output<typeof certificateMetadataObjectSchema>,
+  context: z.RefinementCtx,
+  requirePageAttestations: boolean,
+) => {
+  const pages = metadata.pages ?? [];
+  const pageMap = new Map<number, Set<string>>();
+  let submittedPageCharacters = 0;
+  for (const [index, page] of pages.entries()) {
+    submittedPageCharacters += page.text.length;
+    if (pageMap.has(page.page)) {
       context.addIssue({
         code: "custom",
-        path: ["pages"],
-        message: "Combined submitted page text exceeds 2,000,000 characters",
+        path: ["pages", index, "page"],
+        message: `Page ${page.page} is duplicated`,
       });
+      continue;
     }
-    const orderedPageNumbers = [...pageMap.keys()].sort((left, right) => left - right);
-    if (orderedPageNumbers.some((page, index) => page !== index + 1)) {
+    pageMap.set(
+      page.page,
+      new Set(
+        normalizeOcrText(page.text)
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+  if (submittedPageCharacters > 2_000_000) {
+    context.addIssue({
+      code: "custom",
+      path: ["pages"],
+      message: "Combined submitted page text exceeds 2,000,000 characters",
+    });
+  }
+  const orderedPageNumbers = [...pageMap.keys()].sort((left, right) => left - right);
+  if (orderedPageNumbers.some((page, index) => page !== index + 1)) {
+    context.addIssue({
+      code: "custom",
+      path: ["pages"],
+      message: "Submitted page metadata must be contiguous and start at page 1",
+    });
+  }
+  if (metadata.provenance.length > 0 && pages.length === 0) {
+    context.addIssue({
+      code: "custom",
+      path: ["pages"],
+      message: "Page metadata is required when extraction provenance is submitted",
+    });
+  }
+  for (const [index, citation] of metadata.provenance.entries()) {
+    const pageLines = pageMap.get(citation.page);
+    if (!pageLines) {
       context.addIssue({
         code: "custom",
-        path: ["pages"],
-        message: "Submitted page metadata must be contiguous and start at page 1",
+        path: ["provenance", index, "page"],
+        message: `Citation page ${citation.page} is not present in submitted page metadata`,
       });
+      continue;
     }
-    if (metadata.provenance.length > 0 && pages.length === 0) {
+    const normalizedCitation = normalizeOcrText(citation.rawText);
+    if (!pageLines.has(normalizedCitation)) {
       context.addIssue({
         code: "custom",
-        path: ["pages"],
-        message: "Page metadata is required when extraction provenance is submitted",
+        path: ["provenance", index, "rawText"],
+        message: "Citation text does not match a normalized line on the cited page",
       });
     }
-    for (const [index, citation] of metadata.provenance.entries()) {
-      const pageLines = pageMap.get(citation.page);
-      if (!pageLines) {
-        context.addIssue({
-          code: "custom",
-          path: ["provenance", index, "page"],
-          message: `Citation page ${citation.page} is not present in submitted page metadata`,
-        });
-        continue;
-      }
-      const normalizedCitation = normalizeOcrText(citation.rawText);
-      if (!pageLines.has(normalizedCitation)) {
-        context.addIssue({
-          code: "custom",
-          path: ["provenance", index, "rawText"],
-          message: "Citation text does not match a normalized line on the cited page",
-        });
-      }
+    if (
+      citation.field === "ENDORSEMENT_EVIDENCE_LEVEL" &&
+      citation.extractedValue !== "MENTIONED"
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["provenance", index, "extractedValue"],
+        message: "Machine endorsement evidence cannot exceed MENTIONED",
+      });
+    }
+  }
+  for (const [policyIndex, policy] of metadata.policies.entries()) {
+    for (const [endorsementIndex, endorsement] of policy.endorsements.entries()) {
+      const path = ["policies", policyIndex, "endorsements", endorsementIndex, "sourcePages"];
+      const requiresPage = ["ATTACHED", "HUMAN_VERIFIED"].includes(endorsement.evidenceLevel);
       if (
-        citation.field === "ENDORSEMENT_EVIDENCE_LEVEL" &&
-        citation.extractedValue !== "MENTIONED"
+        requiresPage &&
+        ((requirePageAttestations && !endorsement.sourcePages?.length) ||
+          endorsement.sourcePages?.length === 0)
       ) {
         context.addIssue({
           code: "custom",
-          path: ["provenance", index, "extractedValue"],
-          message: "Machine endorsement evidence cannot exceed MENTIONED",
+          path,
+          message: `${endorsement.evidenceLevel} endorsement evidence requires at least one source page`,
         });
       }
+      if (endorsement.sourcePages?.length && requirePageAttestations && pages.length === 0) {
+        context.addIssue({
+          code: "custom",
+          path,
+          message: "Submitted page metadata is required for endorsement source pages",
+        });
+      }
+      for (const sourcePage of endorsement.sourcePages ?? []) {
+        if (pages.length > 0 && !pageMap.has(sourcePage)) {
+          context.addIssue({
+            code: "custom",
+            path,
+            message: `Endorsement source page ${sourcePage} is not present in submitted page metadata`,
+          });
+        }
+      }
     }
-  });
+  }
+};
+
+/** Stored-record parser. Missing sourcePages remains valid for pre-v0.4 records. */
+export const certificateMetadataSchema = certificateMetadataObjectSchema.superRefine(
+  (metadata, context) => validateCertificateMetadata(metadata, context, false),
+);
+
+/** New uploads must make strong endorsement evidence page-addressable. */
+export const certificateSubmissionMetadataSchema = certificateMetadataObjectSchema.superRefine(
+  (metadata, context) => validateCertificateMetadata(metadata, context, true),
+);
 
 /**
  * Reviewer-editable facts are deliberately narrower than stored extraction
@@ -200,7 +265,24 @@ export const certificateCorrectionSchema = z
     issueDate: optionalIsoDate,
     producer: optionalText,
     certificateHolder: optionalText,
-    policies: z.array(policySchema).max(50),
+    policies: z
+      .array(
+        policySchema.superRefine((policy, context) => {
+          for (const [index, endorsement] of policy.endorsements.entries()) {
+            if (
+              ["ATTACHED", "HUMAN_VERIFIED"].includes(endorsement.evidenceLevel) &&
+              !endorsement.sourcePages?.length
+            ) {
+              context.addIssue({
+                code: "custom",
+                path: ["endorsements", index, "sourcePages"],
+                message: `${endorsement.evidenceLevel} endorsement evidence requires at least one source page`,
+              });
+            }
+          }
+        }),
+      )
+      .max(50),
   })
   .strict();
 
@@ -218,6 +300,7 @@ export interface IngestCertificateInput {
   bytes: Uint8Array;
   metadata: unknown;
   uploadedByUserId?: string;
+  submittedByServiceAccountId?: string;
   uploadLinkId?: string;
   consumeUploadLink?: boolean;
   forceUnconfirmed?: boolean;
@@ -296,6 +379,92 @@ export const parseCertificateMetadata = (
   }
   const parsed = certificateMetadataSchema.parse(raw);
   return forceUnconfirmed ? { ...parsed, reviewStatus: "UNCONFIRMED" } : parsed;
+};
+
+export const parseCertificateSubmissionMetadata = (
+  input: unknown,
+  forceUnconfirmed = false,
+): CertificateMetadata => {
+  const raw =
+    typeof input === "string"
+      ? input.trim()
+        ? safeJson<unknown>(input, Symbol.for("invalid-json"))
+        : {}
+      : (input ?? {});
+  if (raw === Symbol.for("invalid-json")) {
+    throw new TypeError("The metadata field is not valid JSON");
+  }
+  const parsed = certificateSubmissionMetadataSchema.parse(raw);
+  return forceUnconfirmed ? { ...parsed, reviewStatus: "UNCONFIRMED" } : parsed;
+};
+
+const strongEndorsementEvidence = (level: string): boolean =>
+  level === "ATTACHED" || level === "HUMAN_VERIFIED";
+
+const assertEvidenceWithinSourceDocument = (
+  metadata: CertificateMetadata,
+  sourceDocumentPageCount: number | null,
+): void => {
+  const hasPageReferences = metadata.policies.some((policy) =>
+    policy.endorsements.some((endorsement) => Boolean(endorsement.sourcePages?.length)),
+  );
+  const hasStrongEvidence = metadata.policies.some((policy) =>
+    policy.endorsements.some((endorsement) => strongEndorsementEvidence(endorsement.evidenceLevel)),
+  );
+  if (sourceDocumentPageCount === null) {
+    if (hasPageReferences || hasStrongEvidence) {
+      throw new TypeError(
+        "Strong endorsement evidence cannot be confirmed without a server-validated PDF page count; resubmit the document or downgrade the evidence",
+      );
+    }
+    return;
+  }
+  if (
+    !Number.isSafeInteger(sourceDocumentPageCount) ||
+    sourceDocumentPageCount < 1 ||
+    sourceDocumentPageCount > 100
+  ) {
+    throw new TypeError("The server-validated PDF page count is invalid");
+  }
+  for (const page of metadata.pages ?? []) {
+    if (page.page > sourceDocumentPageCount) {
+      throw new TypeError(
+        `Submitted extraction page ${page.page} exceeds the ${sourceDocumentPageCount}-page source PDF`,
+      );
+    }
+  }
+  for (const policy of metadata.policies) {
+    for (const endorsement of policy.endorsements) {
+      if (
+        strongEndorsementEvidence(endorsement.evidenceLevel) &&
+        !endorsement.sourcePages?.length
+      ) {
+        throw new TypeError(
+          `${endorsement.evidenceLevel} endorsement evidence requires an exact source page`,
+        );
+      }
+      for (const page of endorsement.sourcePages ?? []) {
+        if (page > sourceDocumentPageCount) {
+          throw new TypeError(
+            `Endorsement source page ${page} exceeds the ${sourceDocumentPageCount}-page source PDF`,
+          );
+        }
+      }
+    }
+  }
+};
+
+const trustedPageCountFromExtraction = (extraction: Record<string, unknown>): number | null => {
+  const openCoi =
+    extraction._opencoi &&
+    typeof extraction._opencoi === "object" &&
+    !Array.isArray(extraction._opencoi)
+      ? (extraction._opencoi as Record<string, unknown>)
+      : null;
+  const value = openCoi?.sourceDocumentPageCount;
+  return Number.isSafeInteger(value) && Number(value) >= 1 && Number(value) <= 100
+    ? Number(value)
+    : null;
 };
 
 const machineProposalSnapshot = (extraction: Record<string, unknown>): Record<string, unknown> => {
@@ -495,6 +664,7 @@ export const documentFacts = (
             endorsementIndex: originalEndorsementIndex ?? endorsementIndex,
           }) ?? findProvenance(metadata, "ENDORSEMENT_EVIDENCE_LEVEL", endorsement.evidenceLevel),
         ),
+        ...(endorsement.sourcePages?.length ? { sourcePages: endorsement.sourcePages } : {}),
       });
     }
     const limits: Partial<Record<LimitType, EvidenceField<MoneyMinor>>> = {};
@@ -794,13 +964,19 @@ const replaceCertificateFacts = (
 export const ingestCertificate = async (
   input: IngestCertificateInput,
 ): Promise<IngestCertificateResult> => {
+  if (input.uploadedByUserId && input.submittedByServiceAccountId) {
+    throw new TypeError(
+      "A certificate submission cannot have both a user and service-account actor",
+    );
+  }
   const vendor = input.repository.getVendor(input.vendorId);
   if (!vendor) throw new TypeError("Vendor does not exist in this organization");
-  const metadata = parseCertificateMetadata(input.metadata, input.forceUnconfirmed);
+  const metadata = parseCertificateSubmissionMetadata(input.metadata, input.forceUnconfirmed);
   const stored = await input.documentStore.putPdf(input.bytes);
   const now = input.now ?? new Date();
   const evaluationDate = now.toISOString().slice(0, 10);
   try {
+    assertEvidenceWithinSourceDocument(metadata, stored.pageCount);
     return input.repository.transaction((repository) => {
       if (
         input.uploadLinkId &&
@@ -850,6 +1026,7 @@ export const ingestCertificate = async (
           requirementVersion,
           evaluationVendorType: evaluationContext.evaluationVendorType,
           evaluatedRuleset: evaluationContext.evaluatedRuleset,
+          sourceDocumentPageCount: stored.pageCount,
           scope: "UPLOADED_DOCUMENT",
         },
       };
@@ -871,10 +1048,18 @@ export const ingestCertificate = async (
           vendorId: input.vendorId,
           documentId: document.id,
           reviewStatus: metadata.reviewStatus,
-          submissionChannel: input.uploadLinkId ? "vendor_upload_link" : "staff",
+          submissionChannel: input.uploadLinkId
+            ? "vendor_upload_link"
+            : input.submittedByServiceAccountId
+              ? "api"
+              : "staff",
         },
-        actorType: input.uploadedByUserId ? "user" : "system",
-        actorId: input.uploadedByUserId,
+        actorType: input.uploadedByUserId
+          ? "user"
+          : input.submittedByServiceAccountId
+            ? "service_account"
+            : "system",
+        actorId: input.uploadedByUserId ?? input.submittedByServiceAccountId,
         at: now.toISOString(),
       });
       if (metadata.reviewStatus === "CONFIRMED") {
@@ -931,6 +1116,10 @@ export const confirmStoredCertificate = (input: {
     const document = repository.getDocument(certificate.document_id);
     if (!document) throw new Error("Certificate document is unavailable");
     const storedExtraction = parseJsonObject(document.extraction_json);
+    const previousOpenCoi =
+      storedExtraction._opencoi && typeof storedExtraction._opencoi === "object"
+        ? (storedExtraction._opencoi as Record<string, unknown>)
+        : {};
     const corrections =
       input.corrections === undefined
         ? undefined
@@ -947,6 +1136,7 @@ export const confirmStoredCertificate = (input: {
       ...corrections,
       reviewStatus: "CONFIRMED",
     });
+    assertEvidenceWithinSourceDocument(metadata, trustedPageCountFromExtraction(storedExtraction));
     const now = input.now ?? new Date();
     const evaluationDate = now.toISOString().slice(0, 10);
     certificate.confirmed_by_user_id = input.reviewerUserId;
@@ -965,10 +1155,6 @@ export const confirmStoredCertificate = (input: {
       evaluationDate,
     );
     const { requirementVersion } = evaluationContext;
-    const previousOpenCoi =
-      storedExtraction._opencoi && typeof storedExtraction._opencoi === "object"
-        ? (storedExtraction._opencoi as Record<string, unknown>)
-        : {};
     const immutableMachineProposal =
       previousOpenCoi.machineProposal &&
       typeof previousOpenCoi.machineProposal === "object" &&

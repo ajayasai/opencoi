@@ -5,7 +5,13 @@ import { DatabaseSync } from "node:sqlite";
 
 export const DATABASE_SCHEMA_VERSION = 4;
 
-const SCHEMA = `
+/**
+ * Canonical foundation schema installed for a new database.
+ *
+ * This string is also checksum material for the migration ledger. Never edit a
+ * released migration in place; add a new ordered migration instead.
+ */
+export const FOUNDATION_SCHEMA_V4_SQL = `
 CREATE TABLE organizations (
   id TEXT PRIMARY KEY,
   slug TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -489,6 +495,120 @@ BEGIN
 END;
 `;
 
+/** Immutable transition used when upgrading the historical foundation v1 schema. */
+export const FOUNDATION_SCHEMA_V1_TO_V2_SQL = `
+  ALTER TABLE reminders
+    ADD COLUMN retry_eligible INTEGER NOT NULL DEFAULT 0 CHECK (retry_eligible IN (0, 1));
+  ALTER TABLE reminders ADD COLUMN next_attempt_at TEXT;
+  DROP INDEX IF EXISTS reminders_due_idx;
+  CREATE INDEX reminders_due_idx
+    ON reminders (organization_id, status, retry_eligible, next_attempt_at, scheduled_for);
+  PRAGMA user_version = 2;
+`;
+
+/** Immutable transition used when upgrading the historical foundation v2 schema. */
+export const FOUNDATION_SCHEMA_V2_TO_V3_SQL = `
+  CREATE TABLE oidc_identities (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    issuer TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    email_at_binding TEXT COLLATE NOCASE,
+    created_at TEXT NOT NULL,
+    last_login_at TEXT NOT NULL,
+    UNIQUE (organization_id, id),
+    UNIQUE (organization_id, issuer, subject),
+    UNIQUE (organization_id, issuer, user_id),
+    FOREIGN KEY (organization_id, user_id)
+      REFERENCES users(organization_id, id) ON DELETE CASCADE,
+    CHECK (length(issuer) BETWEEN 1 AND 2048),
+    CHECK (length(subject) BETWEEN 1 AND 512)
+  ) STRICT;
+  CREATE TABLE oidc_login_transactions (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    issuer TEXT NOT NULL,
+    transaction_token_hash TEXT NOT NULL UNIQUE,
+    state_hash TEXT NOT NULL,
+    code_verifier TEXT NOT NULL,
+    nonce TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (organization_id, id),
+    CHECK (length(transaction_token_hash) = 64),
+    CHECK (length(state_hash) = 64),
+    CHECK (length(code_verifier) BETWEEN 43 AND 256),
+    CHECK (length(nonce) BETWEEN 32 AND 256)
+  ) STRICT;
+  CREATE INDEX oidc_transactions_active_idx
+    ON oidc_login_transactions (organization_id, transaction_token_hash, expires_at)
+    WHERE consumed_at IS NULL;
+  PRAGMA user_version = 3;
+`;
+
+/** Immutable transition used when upgrading the historical foundation v3 schema. */
+export const FOUNDATION_SCHEMA_V3_TO_V4_SQL = `
+  CREATE TABLE certificate_requests (
+    id TEXT PRIMARY KEY,
+    organization_id TEXT NOT NULL,
+    vendor_id TEXT NOT NULL,
+    upload_link_id TEXT NOT NULL,
+    source_certificate_id TEXT,
+    submitted_certificate_id TEXT,
+    request_kind TEXT NOT NULL CHECK (request_kind IN ('initial', 'renewal')),
+    delivery_method TEXT NOT NULL CHECK (delivery_method IN ('manual', 'smtp')),
+    delivery_status TEXT NOT NULL
+      CHECK (delivery_status IN ('manual_ready', 'queued', 'processing', 'accepted', 'failed', 'cancelled', 'superseded', 'expired')),
+    recipient_name TEXT,
+    recipient_email TEXT COLLATE NOCASE,
+    state TEXT NOT NULL DEFAULT 'open'
+      CHECK (state IN ('open', 'submitted', 'cancelled', 'expired')),
+    upload_token_ciphertext TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    last_attempt_at TEXT,
+    next_attempt_at TEXT,
+    claim_token TEXT,
+    claimed_at TEXT,
+    accepted_at TEXT,
+    delivery_error TEXT,
+    created_by_user_id TEXT,
+    submitted_at TEXT,
+    cancelled_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE (organization_id, id),
+    UNIQUE (organization_id, upload_link_id),
+    FOREIGN KEY (organization_id, vendor_id)
+      REFERENCES vendors(organization_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id, upload_link_id)
+      REFERENCES upload_links(organization_id, id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id, source_certificate_id)
+      REFERENCES certificates(organization_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (organization_id, submitted_certificate_id)
+      REFERENCES certificates(organization_id, id) ON DELETE RESTRICT,
+    FOREIGN KEY (organization_id, created_by_user_id)
+      REFERENCES users(organization_id, id) ON DELETE RESTRICT,
+    CHECK (delivery_method <> 'smtp' OR recipient_email IS NOT NULL),
+    CHECK (delivery_method <> 'manual' OR delivery_status = 'manual_ready'),
+    CHECK (delivery_method <> 'smtp' OR delivery_status <> 'manual_ready'),
+    CHECK (state <> 'open' OR delivery_status NOT IN ('queued', 'processing') OR upload_token_ciphertext IS NOT NULL),
+    CHECK (delivery_status = 'processing' OR (claim_token IS NULL AND claimed_at IS NULL)),
+    CHECK (delivery_status <> 'processing' OR (claim_token IS NOT NULL AND claimed_at IS NOT NULL)),
+    CHECK (state = 'open' OR upload_token_ciphertext IS NULL),
+    CHECK (state <> 'submitted' OR (submitted_certificate_id IS NOT NULL AND submitted_at IS NOT NULL)),
+    CHECK (state = 'submitted' OR (submitted_certificate_id IS NULL AND submitted_at IS NULL)),
+    CHECK (state <> 'cancelled' OR cancelled_at IS NOT NULL),
+    CHECK (state = 'cancelled' OR cancelled_at IS NULL)
+  ) STRICT;
+  CREATE INDEX certificate_requests_vendor_idx
+    ON certificate_requests (organization_id, vendor_id, created_at DESC);
+  CREATE INDEX certificate_requests_delivery_idx
+    ON certificate_requests (organization_id, state, delivery_status, next_attempt_at, created_at);
+  PRAGMA user_version = 4;
+`;
+
 export type OpenCoiDatabase = DatabaseSync;
 
 export interface OpenDatabaseOptions {
@@ -559,125 +679,20 @@ export const initializeDatabase = (database: OpenCoiDatabase): void =>
       );
     }
     if (version === 0) {
-      database.exec(SCHEMA);
+      database.exec(FOUNDATION_SCHEMA_V4_SQL);
       database.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
       version = DATABASE_SCHEMA_VERSION;
     }
     if (version === 1) {
-      database.exec(`
-        ALTER TABLE reminders
-          ADD COLUMN retry_eligible INTEGER NOT NULL DEFAULT 0 CHECK (retry_eligible IN (0, 1));
-        ALTER TABLE reminders ADD COLUMN next_attempt_at TEXT;
-        DROP INDEX IF EXISTS reminders_due_idx;
-        CREATE INDEX reminders_due_idx
-          ON reminders (organization_id, status, retry_eligible, next_attempt_at, scheduled_for);
-        PRAGMA user_version = 2;
-      `);
+      database.exec(FOUNDATION_SCHEMA_V1_TO_V2_SQL);
       version = 2;
     }
     if (version === 2) {
-      database.exec(`
-        CREATE TABLE oidc_identities (
-          id TEXT PRIMARY KEY,
-          organization_id TEXT NOT NULL,
-          issuer TEXT NOT NULL,
-          subject TEXT NOT NULL,
-          user_id TEXT NOT NULL,
-          email_at_binding TEXT COLLATE NOCASE,
-          created_at TEXT NOT NULL,
-          last_login_at TEXT NOT NULL,
-          UNIQUE (organization_id, id),
-          UNIQUE (organization_id, issuer, subject),
-          UNIQUE (organization_id, issuer, user_id),
-          FOREIGN KEY (organization_id, user_id)
-            REFERENCES users(organization_id, id) ON DELETE CASCADE,
-          CHECK (length(issuer) BETWEEN 1 AND 2048),
-          CHECK (length(subject) BETWEEN 1 AND 512)
-        ) STRICT;
-        CREATE TABLE oidc_login_transactions (
-          id TEXT PRIMARY KEY,
-          organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-          issuer TEXT NOT NULL,
-          transaction_token_hash TEXT NOT NULL UNIQUE,
-          state_hash TEXT NOT NULL,
-          code_verifier TEXT NOT NULL,
-          nonce TEXT NOT NULL,
-          expires_at TEXT NOT NULL,
-          consumed_at TEXT,
-          created_at TEXT NOT NULL,
-          UNIQUE (organization_id, id),
-          CHECK (length(transaction_token_hash) = 64),
-          CHECK (length(state_hash) = 64),
-          CHECK (length(code_verifier) BETWEEN 43 AND 256),
-          CHECK (length(nonce) BETWEEN 32 AND 256)
-        ) STRICT;
-        CREATE INDEX oidc_transactions_active_idx
-          ON oidc_login_transactions (organization_id, transaction_token_hash, expires_at)
-          WHERE consumed_at IS NULL;
-        PRAGMA user_version = 3;
-      `);
+      database.exec(FOUNDATION_SCHEMA_V2_TO_V3_SQL);
       version = 3;
     }
     if (version === 3) {
-      database.exec(`
-        CREATE TABLE certificate_requests (
-          id TEXT PRIMARY KEY,
-          organization_id TEXT NOT NULL,
-          vendor_id TEXT NOT NULL,
-          upload_link_id TEXT NOT NULL,
-          source_certificate_id TEXT,
-          submitted_certificate_id TEXT,
-          request_kind TEXT NOT NULL CHECK (request_kind IN ('initial', 'renewal')),
-          delivery_method TEXT NOT NULL CHECK (delivery_method IN ('manual', 'smtp')),
-          delivery_status TEXT NOT NULL
-            CHECK (delivery_status IN ('manual_ready', 'queued', 'processing', 'accepted', 'failed', 'cancelled', 'superseded', 'expired')),
-          recipient_name TEXT,
-          recipient_email TEXT COLLATE NOCASE,
-          state TEXT NOT NULL DEFAULT 'open'
-            CHECK (state IN ('open', 'submitted', 'cancelled', 'expired')),
-          upload_token_ciphertext TEXT,
-          attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
-          last_attempt_at TEXT,
-          next_attempt_at TEXT,
-          claim_token TEXT,
-          claimed_at TEXT,
-          accepted_at TEXT,
-          delivery_error TEXT,
-          created_by_user_id TEXT,
-          submitted_at TEXT,
-          cancelled_at TEXT,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          UNIQUE (organization_id, id),
-          UNIQUE (organization_id, upload_link_id),
-          FOREIGN KEY (organization_id, vendor_id)
-            REFERENCES vendors(organization_id, id) ON DELETE CASCADE,
-          FOREIGN KEY (organization_id, upload_link_id)
-            REFERENCES upload_links(organization_id, id) ON DELETE CASCADE,
-          FOREIGN KEY (organization_id, source_certificate_id)
-            REFERENCES certificates(organization_id, id) ON DELETE RESTRICT,
-          FOREIGN KEY (organization_id, submitted_certificate_id)
-            REFERENCES certificates(organization_id, id) ON DELETE RESTRICT,
-          FOREIGN KEY (organization_id, created_by_user_id)
-            REFERENCES users(organization_id, id) ON DELETE RESTRICT,
-          CHECK (delivery_method <> 'smtp' OR recipient_email IS NOT NULL),
-          CHECK (delivery_method <> 'manual' OR delivery_status = 'manual_ready'),
-          CHECK (delivery_method <> 'smtp' OR delivery_status <> 'manual_ready'),
-          CHECK (state <> 'open' OR delivery_status NOT IN ('queued', 'processing') OR upload_token_ciphertext IS NOT NULL),
-          CHECK (delivery_status = 'processing' OR (claim_token IS NULL AND claimed_at IS NULL)),
-          CHECK (delivery_status <> 'processing' OR (claim_token IS NOT NULL AND claimed_at IS NOT NULL)),
-          CHECK (state = 'open' OR upload_token_ciphertext IS NULL),
-          CHECK (state <> 'submitted' OR (submitted_certificate_id IS NOT NULL AND submitted_at IS NOT NULL)),
-          CHECK (state = 'submitted' OR (submitted_certificate_id IS NULL AND submitted_at IS NULL)),
-          CHECK (state <> 'cancelled' OR cancelled_at IS NOT NULL),
-          CHECK (state = 'cancelled' OR cancelled_at IS NULL)
-        ) STRICT;
-        CREATE INDEX certificate_requests_vendor_idx
-          ON certificate_requests (organization_id, vendor_id, created_at DESC);
-        CREATE INDEX certificate_requests_delivery_idx
-          ON certificate_requests (organization_id, state, delivery_status, next_attempt_at, created_at);
-        PRAGMA user_version = 4;
-      `);
+      database.exec(FOUNDATION_SCHEMA_V3_TO_V4_SQL);
     }
   });
 

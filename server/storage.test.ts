@@ -1,6 +1,7 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PDFDocument } from "@cantoo/pdf-lib";
 import { describe, expect, it } from "vitest";
 import {
   attachmentContentDisposition,
@@ -10,9 +11,56 @@ import {
   UnsafeDocumentError,
 } from "./storage.js";
 
-const minimalPdf = Buffer.from(
-  "%PDF-1.4\n1 0 obj <</Type /Catalog /Pages 2 0 R>> endobj\n2 0 obj <</Type /Pages /Kids[3 0 R] /Count 1>> endobj\n3 0 obj <</Type /Page /Parent 2 0 R>> endobj\n%%EOF",
-);
+const validPdf = (pageCount = 1): Buffer => {
+  const pageObjectNumbers = Array.from({ length: pageCount }, (_, index) => index + 3);
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Kids [${pageObjectNumbers.map((number) => `${number} 0 R`).join(" ")}] /Count ${pageCount} >>`,
+    ...pageObjectNumbers.map(() => "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"),
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(body, "ascii"));
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(body, "ascii");
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("");
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(body, "ascii");
+};
+
+const minimalPdf = validPdf();
+
+const pdfWithUnderreportedPageTree = (actualPageCount: number): Buffer => {
+  const pageObjectNumbers = Array.from({ length: actualPageCount }, (_, index) => index + 3);
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Kids [${pageObjectNumbers.map((number) => `${number} 0 R`).join(" ")}] /Count 1 >>`,
+    ...pageObjectNumbers.map(
+      () =>
+        "<< /Type % a legal PDF comment defeats byte-pattern counting\n/Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+    ),
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(body, "ascii"));
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xrefOffset = Buffer.byteLength(body, "ascii");
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets
+    .slice(1)
+    .map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`)
+    .join("");
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`;
+  return Buffer.from(body, "ascii");
+};
 
 describe("PDF storage", () => {
   it("stores a PDF under a generated path and returns a digest", async () => {
@@ -22,7 +70,7 @@ describe("PDF storage", () => {
 
     expect(stored.storageKey).toMatch(/^[a-f0-9]{2}\/[a-f0-9-]{36}\.pdf$/);
     expect(stored.sha256).toHaveLength(64);
-    expect(stored.pageCountEstimate).toBe(1);
+    expect(stored.pageCount).toBe(1);
     expect(await readFile(join(directory, stored.storageKey))).toEqual(minimalPdf);
   });
 
@@ -36,6 +84,34 @@ describe("PDF storage", () => {
     await expect(
       store.putPdf(Buffer.concat([minimalPdf, Buffer.from(" /Encrypt")])),
     ).rejects.toBeInstanceOf(UnsafeDocumentError);
+  });
+
+  it("parses and returns the trusted PDF page count", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "opencoi-store-"));
+    const store = new FileSystemDocumentStore(directory);
+
+    expect((await store.putPdf(validPdf(3))).pageCount).toBe(3);
+  });
+
+  it("agrees on page counts in a PDF with compressed object streams", async () => {
+    const source = await PDFDocument.create();
+    source.addPage();
+    source.addPage();
+    source.addPage();
+    const bytes = await source.save({ useObjectStreams: true });
+    const directory = await mkdtemp(join(tmpdir(), "opencoi-store-"));
+    const store = new FileSystemDocumentStore(directory);
+
+    expect((await store.putPdf(bytes)).pageCount).toBe(3);
+  });
+
+  it("rejects a page tree whose declared count hides additional page objects", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "opencoi-store-"));
+    const store = new FileSystemDocumentStore(directory);
+
+    await expect(store.putPdf(pdfWithUnderreportedPageTree(80))).rejects.toThrow(
+      "PDF contains an inconsistent page tree",
+    );
   });
 
   it("does not allow a storage-key path escape", async () => {

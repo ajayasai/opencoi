@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { documentFacts, parseCertificateMetadata } from "./certificates.js";
+import {
+  certificateCorrectionSchema,
+  documentFacts,
+  parseCertificateMetadata,
+  parseCertificateSubmissionMetadata,
+} from "./certificates.js";
 
 const baseMetadata = {
   reviewStatus: "UNCONFIRMED" as const,
@@ -183,5 +188,93 @@ describe("certificate extraction provenance", () => {
         ),
       }),
     ).toThrow(/cannot exceed MENTIONED/i);
+  });
+
+  it("requires canonical page attestations for strong endorsement evidence in new submissions", () => {
+    const strongEndorsement = {
+      ...baseMetadata,
+      reviewStatus: "CONFIRMED" as const,
+      policies: [
+        {
+          ...baseMetadata.policies[0],
+          endorsements: [
+            {
+              name: "Additional insured",
+              evidenceLevel: "HUMAN_VERIFIED" as const,
+              sourcePages: [2, 3],
+            },
+          ],
+        },
+      ],
+    };
+    const parsed = parseCertificateSubmissionMetadata(strongEndorsement);
+    expect(parsed.policies[0]?.endorsements[0]?.sourcePages).toEqual([2, 3]);
+    expect(documentFacts("document-a", parsed).endorsements[0]?.sourcePages).toEqual([2, 3]);
+
+    expect(() =>
+      parseCertificateSubmissionMetadata({
+        ...strongEndorsement,
+        policies: [
+          {
+            ...strongEndorsement.policies[0],
+            endorsements: [{ name: "Additional insured", evidenceLevel: "ATTACHED" }],
+          },
+        ],
+      }),
+    ).toThrow(/requires at least one source page/i);
+    expect(() =>
+      parseCertificateSubmissionMetadata({
+        ...strongEndorsement,
+        policies: [
+          {
+            ...strongEndorsement.policies[0],
+            endorsements: [
+              {
+                name: "Additional insured",
+                evidenceLevel: "ATTACHED",
+                sourcePages: [3, 2],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(/unique and sorted/i);
+    expect(() =>
+      parseCertificateSubmissionMetadata({
+        ...strongEndorsement,
+        policies: [
+          {
+            ...strongEndorsement.policies[0],
+            endorsements: [
+              {
+                name: "Additional insured",
+                evidenceLevel: "ATTACHED",
+                sourcePages: [4],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toThrow(/not present/i);
+  });
+
+  it("loads legacy strong evidence without pages but rejects it in a new correction", () => {
+    const legacyPolicy = {
+      ...baseMetadata.policies[0],
+      endorsements: [{ name: "Additional insured", evidenceLevel: "ATTACHED" as const }],
+    };
+    expect(
+      parseCertificateMetadata({ ...baseMetadata, policies: [legacyPolicy] }).policies[0]
+        ?.endorsements[0]?.sourcePages,
+    ).toBeUndefined();
+    expect(() =>
+      certificateCorrectionSchema.parse({
+        namedInsured: "Acme Electric LLC",
+        issueDate: null,
+        producer: null,
+        certificateHolder: null,
+        policies: [legacyPolicy],
+      }),
+    ).toThrow(/requires at least one source page/i);
   });
 });

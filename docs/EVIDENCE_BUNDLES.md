@@ -10,10 +10,12 @@ The bundle does **not** assert that a policy is active in an insurer's system.
 It preserves and authenticates an OpenCOI document assessment at an export
 time.
 
-Verification confirms the bundle's integrity under its included signing key
-and can optionally confirm the source PDF hash. It does not rerun the evaluator,
-prove that the recorded outcome is correct, or identify the organization unless
-the public-key fingerprint is matched through an independently trusted channel.
+Verification strictly validates the complete v1 payload structure and its
+cross-field invariants, confirms the bundle's integrity under its included
+signing key, and can optionally confirm the source PDF hash. It does not rerun
+the evaluator, prove that the recorded outcome is correct, or identify the
+organization unless the public-key fingerprint is matched through an
+independently trusted channel.
 
 ## Contents
 
@@ -23,6 +25,9 @@ Version 1 bundles include:
 - the immutable extraction proposal received for an unreviewed submission,
   including submitted page text and page-linked citations when present;
 - the human-confirmed facts and reviewer attestation only after confirmation;
+- endorsement page attestations with the policy and endorsement position,
+  evidence level, canonical one-based PDF page list, and the exact source PDF
+  SHA-256 to which the attestation applies;
 - the exact normalized ruleset used for evaluation, its vendor type and
   version, plus matching publication metadata when available;
 - immutable base findings, expected and observed values, and evidence IDs;
@@ -37,6 +42,28 @@ The JSON envelope is described by
 `null` when the record was confirmed directly at staff intake or predates
 server-side proposal preservation; the exporter never relabels corrected facts
 as the original proposal.
+
+The `evidence` array distinguishes browser extraction citations from
+`endorsement_page_attestation` records. A pending vendor page reference is not
+represented as an attestation. The exporter adds it only after an authorized
+person confirms the extraction, together with the reviewer ID, confirmation
+time, and `reviewer_attested` status. Each endorsement attestation repeats
+`sourceDocumentSha256`; it must equal
+`payload.sourceDocument.sha256`. Both values, the ordered page list, and the
+rest of the payload are covered by the bundle digest and Ed25519 signature, so
+changing a page reference or substituting a document invalidates verification.
+The offline verifier also rejects non-canonical page ordering, source-document
+hash mismatches, reviewer-attested evidence without matching review identity
+and time, endorsement attestations whose signed policy/endorsement indices or
+facts disagree with `confirmedFacts`, review/confirmed-fact contradictions,
+requirement-snapshot mismatches, dangling exception references, and
+inconsistent audit checkpoints.
+The server also requires every attested page to fit a page count parsed from
+the PDF page tree at intake; client-supplied page metadata is not the authority
+for this bound. A legacy record without that trusted count cannot gain strong
+endorsement evidence merely by being confirmed.
+This authenticates what the reviewer recorded; it does not prove that the
+referenced page has a legally sufficient endorsement.
 
 ## Export and offline verification
 
@@ -68,6 +95,12 @@ it was signed. By itself, it cannot prove who controls that key. The separately
 trusted fingerprint is therefore required when organization identity matters.
 The verifier prints this identity boundary explicitly and does not label a
 self-contained signature as trusted organization identity.
+
+`integrity.signature.keyId` is legacy v1 display metadata and is outside the
+canonical signed record. It can be relabeled without invalidating a v1
+signature, so the verifier labels it as **unauthenticated metadata**. Never use
+`keyId` for signer identity or trust decisions. The public-key fingerprint—when
+matched through a separately trusted channel—is the identity control.
 
 ## Key protection and operations
 

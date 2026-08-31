@@ -4,7 +4,13 @@ import { rateLimit } from "express-rate-limit";
 import multer from "multer";
 import { z } from "zod";
 import { buildComplianceStatusCsv } from "../../shared/csv.js";
-import { appendAuditEvent, listAuditEvents, verifyAuditChain } from "../audit.js";
+import {
+  appendAuditEvent,
+  auditActorLabel,
+  listAuditEvents,
+  parseAuditMetadata,
+  verifyAuditChain,
+} from "../audit.js";
 import type { OidcProtocol } from "../auth/oidc.js";
 import type { AppConfig } from "../config.js";
 import type { OpenCoiDatabase, UserRow } from "../db.js";
@@ -13,6 +19,7 @@ import {
   createSessionTokens,
   createUploadLinkToken,
   hashUploadLinkToken,
+  publicUploadUrl,
   verifyPasswordHashesSequentially,
   verifyPasswordOrDummy,
 } from "../security.js";
@@ -66,6 +73,7 @@ export interface ApiDependencies {
   config: AppConfig;
   database: OpenCoiDatabase;
   documentStore: DocumentStore;
+  uploadCapacity: RequestHandler;
   now?: () => Date;
   oidcProtocol?: OidcProtocol;
 }
@@ -400,22 +408,27 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
     handler: (_request, _response, next) =>
       next(new HttpError(429, "Too many requests; try again later")),
   });
+  const publicToken = (request: Request): string => {
+    const match = /^UploadLink ([A-Za-z0-9._-]{40,600})$/.exec(request.get("authorization") ?? "");
+    if (!match?.[1]) throw new HttpError(404, "Upload link is invalid or unavailable");
+    return match[1];
+  };
   const requireActivePublicLink: RequestHandler = (request, _response, next) => {
     try {
       // Reject arbitrary or expired bearer tokens before Multer allocates a
       // bounded in-memory upload. The handler repeats this lookup immediately
       // before the transaction so link expiry/use limits are still enforced.
-      publicLinkContext(dependencies, request.params.token as string, now());
+      publicLinkContext(dependencies, publicToken(request), now());
       next();
     } catch (error) {
       next(error);
     }
   };
   router.get(
-    "/public/upload/:token",
+    "/public/upload",
     publicLimiter,
     asyncRoute(async (request, response) => {
-      const context = publicLinkContext(dependencies, request.params.token as string, now());
+      const context = publicLinkContext(dependencies, publicToken(request), now());
       const requirements = requirementViews(context.repository, context.vendor.vendor_type_id);
       data(response, {
         organizationName: context.organization.name,
@@ -446,14 +459,15 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
   );
 
   router.post(
-    "/public/upload/:token",
+    "/public/upload",
     publicLimiter,
     requireActivePublicLink,
+    dependencies.uploadCapacity,
     pdfUpload,
     asyncRoute(async (request, response) => {
       if (!request.file) throw new HttpError(400, "A PDF document is required");
       const at = now();
-      const context = publicLinkContext(dependencies, request.params.token as string, at);
+      const context = publicLinkContext(dependencies, publicToken(request), at);
       const result = await ingestCertificate({
         database: dependencies.database,
         repository: context.repository,
@@ -895,6 +909,7 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
   router.post(
     "/vendors/:id/certificates",
     requireRole("owner", "admin", "reviewer"),
+    dependencies.uploadCapacity,
     pdfUpload,
     asyncRoute(async (request, response) => {
       if (!request.file) throw new HttpError(400, "A PDF document is required");
@@ -1181,7 +1196,7 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
       });
       data(
         response,
-        { id: link.id, url: `${dependencies.config.appOrigin}/upload/${token}`, expiresAt },
+        { id: link.id, url: publicUploadUrl(dependencies.config.appOrigin, token), expiresAt },
         201,
       );
     },
@@ -1322,7 +1337,7 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
           request: certificateRequestView(created, at),
           uploadUrl:
             created.deliveryMethod === "manual"
-              ? `${dependencies.config.appOrigin}/upload/${uploadToken}`
+              ? publicUploadUrl(dependencies.config.appOrigin, uploadToken)
               : null,
           disclosure:
             created.deliveryMethod === "smtp"
@@ -1633,27 +1648,36 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
         .listUsers()
         .map((user) => [user.id, user.display_name]),
     );
+    const serviceAccounts = new Map(
+      (
+        dependencies.database
+          .prepare("SELECT id, name FROM service_accounts WHERE organization_id = ?")
+          .all(auth.user.organization_id) as Array<{ id: string; name: string }>
+      ).map((account) => [account.id, account.name]),
+    );
     const rows = listAuditEvents(dependencies.database, auth.user.organization_id, { limit: 500 });
     data(
       response,
-      rows.reverse().map((row) => ({
-        id: row.id,
-        actor:
-          (row.actor_user_id ? users.get(row.actor_user_id) : undefined) ??
-          (row.actor_type === "vendor" ? "Vendor uploader" : "OpenCOI"),
-        action: row.action,
-        entityType: row.entity_type,
-        entityLabel: row.entity_id ? `${row.entity_type} ${row.entity_id}` : row.entity_type,
-        createdAt: row.occurred_at,
-        metadata: (() => {
-          try {
-            return JSON.parse(row.metadata_json) as Record<string, unknown>;
-          } catch {
-            return {};
-          }
-        })(),
-        chainValid: verification.valid,
-      })),
+      rows.reverse().map((row) => {
+        const metadata = parseAuditMetadata(row.metadata_json);
+        const serviceAccountId = metadata.serviceAccountId;
+        return {
+          id: row.id,
+          actor: auditActorLabel(row, {
+            userName: row.actor_user_id ? users.get(row.actor_user_id) : undefined,
+            serviceAccountName:
+              typeof serviceAccountId === "string"
+                ? serviceAccounts.get(serviceAccountId)
+                : undefined,
+          }),
+          action: row.action,
+          entityType: row.entity_type,
+          entityLabel: row.entity_id ? `${row.entity_type} ${row.entity_id}` : row.entity_type,
+          createdAt: row.occurred_at,
+          metadata,
+          chainValid: verification.valid,
+        };
+      }),
     );
   });
 

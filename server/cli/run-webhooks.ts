@@ -1,8 +1,7 @@
 import "dotenv/config";
 import { loadConfig } from "../config.js";
 import { openDatabase } from "../db.js";
-import { ensureIntegrationSchema } from "../services/integrationSchema.js";
-import { ensureApiSchema } from "../services/schema.js";
+import { migrateDatabase } from "../migrations.js";
 import { runWebhookDeliveryBatch } from "../services/webhooks.js";
 
 const parsePollMs = (): number => {
@@ -20,9 +19,8 @@ const main = async (): Promise<void> => {
   if (!config.tokenPepper) {
     throw new Error("TOKEN_PEPPER is required to decrypt webhook signing secrets");
   }
-  const database = openDatabase(config.databasePath);
-  ensureApiSchema(database);
-  ensureIntegrationSchema(database);
+  const database = openDatabase(config.databasePath, { initialize: false });
+  migrateDatabase(database);
   const watch = process.argv.includes("--watch");
   const pollMs = parsePollMs();
   let stopping = false;

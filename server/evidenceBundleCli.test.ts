@@ -29,11 +29,56 @@ const fixture = async (pdf: Buffer) => {
     schemaVersion: "1.0",
     exportedAt: "2026-08-31T12:34:56.789Z",
     payload: {
-      sourceDocument: {
-        originalFilename: "synthetic.pdf",
-        sha256: pdfSha256,
+      generator: {
+        name: "OpenCOI",
+        version: "0.4.0",
+        origin: "https://coi.example.test",
       },
+      scope: {
+        organization: { id: "org-1", name: "Example Organization" },
+        vendor: {
+          id: "vendor-1",
+          legalName: "Example Vendor LLC",
+          vendorTypeAtExport: { id: "vendor-type-1", name: "Contractor" },
+        },
+        certificateId: "certificate-1",
+      },
+      exportedBy: { id: "user-1", name: "Example Reviewer" },
+      sourceDocument: {
+        id: "document-1",
+        originalFilename: "synthetic.pdf",
+        mimeType: "application/pdf",
+        byteSize: pdf.byteLength,
+        sha256: pdfSha256,
+        uploadedAt: "2026-08-31T12:00:00.000Z",
+      },
+      review: {
+        status: "draft",
+        reviewedBy: null,
+        reviewedAt: null,
+        evaluationDate: null,
+        requirementVersion: null,
+        evaluationVendorType: null,
+      },
+      machineProposal: {},
+      confirmedFacts: null,
+      evidence: [],
+      requirementSnapshot: null,
       findings: [],
+      exceptions: [],
+      statusAtExport: {
+        documentCheck: "needs_review",
+        documentLifecycle: "unknown",
+        asOf: "2026-08-31T12:34:56.789Z",
+        limitation: "Document assessment only; not live policy verification.",
+      },
+      audit: {
+        organizationChainVerifiedAtExport: true,
+        checkedEvents: 0,
+        error: null,
+        head: null,
+        certificateEvents: [],
+      },
     },
   };
   const canonical = canonicalizeJson(unsigned);
@@ -106,6 +151,7 @@ describe("evidence bundle verifier CLI", () => {
     expect(await runEvidenceBundleVerifier([value.envelopePath], output.io)).toBe(0);
     expect(output.stdout.join("")).toContain("Evidence bundle integrity verified");
     expect(output.stdout.join("")).toContain("Signer identity: NOT verified");
+    expect(output.stdout.join("")).toContain("Signer key label (unauthenticated metadata)");
   });
 
   it("rejects a mismatched supplied PDF digest and trusted signer fingerprint", async () => {
@@ -130,7 +176,7 @@ describe("evidence bundle verifier CLI", () => {
   it("rejects malformed envelopes and cryptographic tampering", async () => {
     const value = await fixture(Buffer.from("%PDF-1.7\nsynthetic evidence\n", "utf8"));
     const tampered = structuredClone(value.envelope);
-    tampered.payload.findings = [{ status: "FAIL" }];
+    (tampered.payload.scope as Record<string, unknown>).certificateId = "tampered-certificate";
     await writeFile(value.envelopePath, JSON.stringify(tampered), "utf8");
 
     const tamperOutput = capture();
@@ -142,5 +188,19 @@ describe("evidence bundle verifier CLI", () => {
     const malformedOutput = capture();
     expect(await runEvidenceBundleVerifier([value.envelopePath], malformedOutput.io)).toBe(1);
     expect(malformedOutput.stderr.join("")).toContain("not valid JSON");
+  });
+
+  it("rejects a signed-envelope-shaped file with an invalid v1 payload", async () => {
+    const value = await fixture(Buffer.from("%PDF-1.7\nsynthetic evidence\n", "utf8"));
+    const invalid = structuredClone(value.envelope);
+    invalid.payload.sourceDocument = {
+      ...(invalid.payload.sourceDocument as Record<string, unknown>),
+      mimeType: "text/plain",
+    };
+    await writeFile(value.envelopePath, JSON.stringify(invalid), "utf8");
+    const output = capture();
+
+    expect(await runEvidenceBundleVerifier([value.envelopePath], output.io)).toBe(1);
+    expect(output.stderr.join("")).toContain("sourceDocument.mimeType must be application/pdf");
   });
 });

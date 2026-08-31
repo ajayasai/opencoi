@@ -45,6 +45,76 @@
         "name": { "type": "string" }
       }
     },
+    "extractionCitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "field",
+        "extractedValue",
+        "policyIndex",
+        "endorsementIndex",
+        "limitType",
+        "confidenceBps",
+        "rawText",
+        "page",
+        "origin",
+        "attestationStatus"
+      ],
+      "properties": {
+        "kind": { "const": "extraction_citation" },
+        "field": { "type": "string", "minLength": 1 },
+        "extractedValue": { "type": ["string", "number"] },
+        "policyIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "endorsementIndex": { "type": ["integer", "null"], "minimum": 0 },
+        "limitType": { "type": ["string", "null"] },
+        "confidenceBps": { "type": ["integer", "null"], "minimum": 0, "maximum": 10000 },
+        "rawText": { "type": "string", "minLength": 1 },
+        "page": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "origin": { "const": "client_submitted_extraction" },
+        "attestationStatus": { "enum": ["unverified", "reviewer_attested"] }
+      }
+    },
+    "endorsementPageAttestation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "policyIndex",
+        "endorsementIndex",
+        "endorsementName",
+        "formCode",
+        "evidenceLevel",
+        "sourcePages",
+        "sourceDocumentSha256",
+        "origin",
+        "attestationStatus",
+        "attestedByUserId",
+        "attestedAt"
+      ],
+      "properties": {
+        "kind": { "const": "endorsement_page_attestation" },
+        "policyIndex": { "type": "integer", "minimum": 0, "maximum": 49 },
+        "endorsementIndex": { "type": "integer", "minimum": 0, "maximum": 99 },
+        "endorsementName": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "formCode": { "type": ["string", "null"], "maxLength": 100 },
+        "evidenceLevel": {
+          "enum": ["NONE", "MENTIONED", "SCHEDULED", "ATTACHED", "HUMAN_VERIFIED"]
+        },
+        "sourcePages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 100 }
+        },
+        "sourceDocumentSha256": { "$ref": "#/$defs/sha256" },
+        "origin": { "const": "submitted_endorsement_page_reference" },
+        "attestationStatus": { "const": "reviewer_attested" },
+        "attestedByUserId": { "type": "string", "minLength": 1 },
+        "attestedAt": { "$ref": "#/$defs/instant" }
+      }
+    },
     "payload": {
       "type": "object",
       "additionalProperties": false,
@@ -101,8 +171,8 @@
           "properties": {
             "id": { "type": "string", "minLength": 1 },
             "originalFilename": { "type": "string" },
-            "mimeType": { "type": "string" },
-            "byteSize": { "type": "integer", "minimum": 0 },
+            "mimeType": { "const": "application/pdf" },
+            "byteSize": { "type": "integer", "minimum": 1 },
             "sha256": { "$ref": "#/$defs/sha256" },
             "uploadedAt": { "$ref": "#/$defs/instant" }
           }
@@ -119,7 +189,7 @@
             "evaluationVendorType"
           ],
           "properties": {
-            "status": { "type": "string" },
+            "status": { "enum": ["draft", "confirmed", "superseded", "rejected"] },
             "reviewedBy": {
               "anyOf": [
                 { "type": "null" },
@@ -137,7 +207,9 @@
             "reviewedAt": {
               "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/instant" }]
             },
-            "evaluationDate": { "$ref": "#/$defs/nullableString" },
+            "evaluationDate": {
+              "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/date" }]
+            },
             "requirementVersion": { "type": ["integer", "null"], "minimum": 1 },
             "evaluationVendorType": {
               "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/identity" }]
@@ -181,7 +253,12 @@
         },
         "evidence": {
           "type": "array",
-          "items": { "$ref": "#/$defs/canonicalValue" }
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/extractionCitation" },
+              { "$ref": "#/$defs/endorsementPageAttestation" }
+            ]
+          }
         },
         "requirementSnapshot": {
           "anyOf": [
@@ -279,7 +356,7 @@
             "properties": {
               "id": { "type": "string", "minLength": 1 },
               "findingId": { "type": "string", "minLength": 1 },
-              "status": { "type": "string" },
+              "status": { "enum": ["pending", "approved", "rejected", "revoked", "expired"] },
               "request": { "$ref": "#/$defs/canonicalValue" },
               "decisionReason": { "$ref": "#/$defs/nullableString" },
               "requestedBy": { "$ref": "#/$defs/identity" },
@@ -301,8 +378,12 @@
           "additionalProperties": false,
           "required": ["documentCheck", "documentLifecycle", "asOf", "limitation"],
           "properties": {
-            "documentCheck": { "type": "string" },
-            "documentLifecycle": { "type": "string" },
+            "documentCheck": {
+              "enum": ["meets", "deficient", "needs_review", "approved_exception", "not_submitted"]
+            },
+            "documentLifecycle": {
+              "enum": ["current", "expiring", "expired", "future", "unknown"]
+            },
             "asOf": { "$ref": "#/$defs/instant" },
             "limitation": { "type": "string", "minLength": 1 }
           }
@@ -395,6 +476,7 @@
           "properties": {
             "algorithm": { "const": "Ed25519" },
             "keyId": {
+              "description": "Unauthenticated legacy v1 display metadata. It is not included in the canonical signed record; use the public-key fingerprint from a trusted channel for signer identity.",
               "type": "string",
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$"
             },

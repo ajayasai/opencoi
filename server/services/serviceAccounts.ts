@@ -5,6 +5,11 @@ import { hashOpaqueToken, randomToken, verifyOpaqueToken } from "../security.js"
 export const SERVICE_ACCOUNT_SCOPES = [
   "vendors:read",
   "vendors:write",
+  "certificates:read",
+  "certificates:write",
+  "requests:read",
+  "requests:write",
+  "evidence:read",
   "requirements:read",
   "compliance:read",
   "events:read",

@@ -1,7 +1,7 @@
 # Threat model
 
 - **Status:** living design and release document
-- **Last reviewed:** 2026-08-31
+- **Last reviewed:** 2026-09-01
 
 This threat model defines the security properties OpenCOI should preserve. It
 is not a claim that every deployment implements every production control.
@@ -25,9 +25,9 @@ limitation visible.
 
 - original PDFs, rendered previews, OCR text, and field-level corrections;
 - vendor and contact details, policy numbers, coverage dates, and limits;
-- organization membership, roles, sessions, credentials, and recovery data;
+- organization membership, roles, sessions, service-account credentials, and recovery data;
 - requirement versions, findings, exception decisions, and audit events;
-- public upload invitations and document-download URLs;
+- public upload invitations, API idempotency responses, and document-download URLs;
 - exports, notification history, provider identifiers, and backups; and
 - application secrets, signing keys, storage credentials, and deployment
   configuration.
@@ -59,7 +59,7 @@ tampering.
 The intended high-level flow is:
 
 1. An authenticated user configures vendors, assignments, and requirements.
-2. A user or narrowly authorized vendor link uploads a PDF.
+2. A user, narrowly authorized vendor link, or scoped service account uploads a PDF.
 3. The service validates and isolates the file before parsing or OCR.
 4. Extraction produces untrusted field candidates with source evidence.
 5. A reviewer confirms, corrects, or rejects the candidates.
@@ -96,10 +96,10 @@ a security certification.
 | ID | Threat | Required controls and acceptance criteria |
 | --- | --- | --- |
 | T1 | Cross-organization access or insecure direct object reference | Authorize every record, search, job, export, and object download server-side. Scope foreign keys and storage keys to the organization; use unguessable public IDs and row-level security where available. Test every route and worker with two organizations. |
-| T2 | Upload-link guessing, leakage, replay, or privilege expansion | Generate at least 256 random bits, store only a digest, bind the token to organization, vendor, engagement, and purpose, and make it short-lived and revocable. A scanner-followed `GET` must not consume it; explicit `POST` performs exchange or use. Rate-limit atomically, redact tokens from all logs, return indistinguishable failures, and set `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. |
+| T2 | Upload-link guessing, leakage, replay, or privilege expansion | Generate at least 256 random bits, store only a digest, bind the token to organization, vendor, engagement, and purpose, and make it short-lived and revocable. Put newly issued browser bearers in a URL fragment, remove the fragment from history before network use, and send the value only in an authorization header to a fixed API path. A scanner-followed `GET` must not consume it; explicit `POST` performs use. Rate-limit atomically, redact tokens, authorization headers, and echoed URLs from all logs/errors, return indistinguishable failures, and set `Referrer-Policy: no-referrer` and `Cache-Control: no-store`. |
 | T3 | Malicious, malformed, oversized, encrypted, polyglot, or active PDF | Validate signature and detected type, not extension; use random private object names; cap bytes, pages, embedded objects, render/OCR time, memory, and tenant quota. Parse in a patched, non-root, networkless sandbox with an ephemeral workspace. Reject or isolate encrypted files, embedded files, JavaScript, and malformed structures. Use malware scanning and content disarm hooks in production; serve inert previews rather than active inline PDFs. |
 | T4 | Code, markup, query, log, or prompt injection through document content | Treat extracted text and metadata as attacker-controlled. Parameterize queries, encode output by context, bound string sizes, neutralize control characters in logs, and never execute document instructions. Any future AI integration must isolate document text as data, use a fixed output schema, have no ambient tools, and require human confirmation. |
-| T5 | OCR error or ambiguous mapping creates a false successful result | Preserve raw candidates, confidence, page and location, corrections, reviewer, and timestamps. Require confirmation for identity, dates, policy mapping, monetary limits, and endorsement evidence. Missing, contradictory, or incomparable data is `UNKNOWN`/`Needs review`, never zero or pass. |
+| T5 | OCR error or ambiguous mapping creates a false successful result | Preserve raw candidates, confidence, page and location, corrections, reviewer, and timestamps. Require confirmation for identity, dates, policy mapping, monetary limits, and endorsement evidence. Strong endorsement evidence must identify exact source pages, and the reviewer attestation must remain distinguishable from machine extraction. Missing, contradictory, or incomparable data is `UNKNOWN`/`Needs review`, never zero or pass. |
 | T6 | Requirement or evaluation tampering | Limit draft, publish, and assignment actions by role. Version published requirements immutably, snapshot canonical inputs and engine version, hash where practical, and record safe audit events. Identical canonical inputs must produce identical base findings. |
 | T7 | Exception abuse hides a deficiency | Keep base findings immutable. Record requester, approver, rationale, scope, compensating controls, and effective dates separately. Prevent a requester from approving the same exception. An expired or wrong-scope exception has no effect. |
 | T8 | Unauthorized or dangerous exports | Reauthorize and audit generation, minimize CSV columns, and neutralize cells beginning with `=`, `+`, `-`, or `@`. Treat full signed evidence bundles as sensitive document derivatives because they intentionally include extracted page text and decision context. Never include bearer tokens. Protect signing private keys and require an out-of-band fingerprint when signer identity matters. |
@@ -107,7 +107,7 @@ a security certification.
 | T10 | Sensitive data appears in telemetry, logs, temporary files, or backups | Never log raw tokens, session IDs, PDFs, full OCR text, credentials, or email bodies. Encrypt transport and managed storage, restrict operational access, define retention for each derivative and backup, and test deletion and restoration. Exclude documents from crash reports and support bundles. |
 | T11 | Session theft, credential attacks, OIDC mix-up, login CSRF, tenant-membership disclosure, or privilege persistence | For OIDC, pin the exact issuer and organization, use Authorization Code with PKCE, state, nonce, one-use transactions, and exact callback URLs; bind immutable issuer/subject identities only to pre-provisioned active users and never derive roles from untrusted claims. For duplicate local emails, apply the optional workspace slug during candidate selection but reveal ambiguity only after valid credentials match multiple tenants. If local passwords are supported, use a modern memory-hard password hash and breached-password screening. Use Secure, HttpOnly, SameSite cookies, CSRF defenses, rotation, short privileged sessions, rate limits, MFA for sensitive roles, and reauthentication for role, export, and exception changes. A role downgrade must invalidate privileged sessions. |
 | T12 | Parser, package, build, or release supply-chain compromise | Pin dependencies with a lockfile, minimize parser and OCR dependencies, run automated vulnerability and secret scanning, review install scripts, publish an SBOM, protect release credentials, and sign or attest releases where practical. |
-| T13 | Resource exhaustion through uploads, OCR, searches, exports, or reminders | Apply per-request and per-organization quotas, concurrency caps, timeouts, pagination, job backpressure, and cost monitoring. A failure must not leave an invitation consumed, partial document trusted, or reminder duplicated. |
+| T13 | Resource exhaustion through uploads, OCR, searches, exports, or reminders | Apply per-request and per-organization quotas, concurrency caps, timeouts, pagination, job backpressure, and cost monitoring. The bundled service admits at most two simultaneous in-memory multipart uploads per process and caps configured PDFs at 25 MiB; an edge proxy should impose compatible byte, connection, and tenant limits before traffic reaches Node.js. A failure must not leave an invitation consumed, partial document trusted, or reminder duplicated. |
 | T14 | A document assessment is mistaken for live policy status | Use the bounded status vocabulary, show the document issue/revision and evaluation dates, retain the source, and display the product disclaimer beside results and exports. Never infer cancellation status or current coverage from silence. |
 | T15 | Audit history is altered or becomes a second sensitive-data store | Separate business audit events from security/operational logs. Make events append-only using database permissions or triggers, record actor, action, target, request ID, reason, and safe field paths, and prevent direct update/delete. Use references instead of copying documents or complete field values. |
 | T16 | File or data from one vendor is deliberately or accidentally assigned to another | Show organization and vendor context throughout upload and review, validate expected identity as a finding, require explicit reassignment with audit history, deduplicate by content hash without crossing tenant boundaries, and never expose match candidates to public uploaders. |
@@ -157,8 +157,17 @@ Machine credentials are separate from browser sessions. A service-account
 token determines its organization and scopes from the stored record; clients
 cannot supply a tenant selector. Tokens contain 256 bits of random secret
 material, are displayed once, stored only as digests, can overlap during
-rotation, and can be individually revoked or disabled as a group. Operators
-must still keep tokens out of source control, URLs, browser storage, and logs.
+rotation, and can be individually revoked or disabled as a group. API PDF
+submissions are forced into human review even if the client labels extracted
+metadata confirmed. Their idempotency hash covers canonical metadata, exact
+PDF bytes, byte size, and filename; replay payloads are encrypted with
+service-account-and-key-bound context when integration credentials are enabled.
+The transactional event records the service-account actor. New vendor upload
+URLs keep their token in the browser fragment and use an authorization header
+against a fixed API path; the client removes the fragment immediately. Operators
+must still redact authorization headers and response bodies, and keep tokens
+and manual upload URLs out of source control, browser storage, proxy logs, and
+support artifacts.
 
 Webhook destinations are attacker-influenced outbound network targets and a
 potential document-data exfiltration path. Only owners/admins can configure
@@ -182,7 +191,7 @@ At minimum, security tests should cover:
 - expired, revoked, replayed, malformed, leaked, scanner-followed, and
   concurrently used invitations;
 - path traversal, spoofed MIME, polyglot, encrypted, huge-page, embedded-file,
-  JavaScript-bearing, malformed, and decompression-bomb PDFs;
+  JavaScript-bearing, malformed, underreported page-tree, and decompression-bomb PDFs;
 - parser/OCR attempts to reach the network, secrets, host filesystem, or
   another job's workspace;
 - OCR-derived XSS, formula injection, log injection, SQL-like strings, and
@@ -192,11 +201,11 @@ At minimum, security tests should cover:
 - duplicate-email wrong-password, wrong-workspace, multi-match, and
   cross-organization local-login behavior;
 - OIDC discovery and callback failures, issuer/audience/signature/nonce/state/PKCE validation, transaction expiry and replay, disabled or unprovisioned users, and cross-organization identity collisions;
-- service-account scope, tenant confusion, expiration, rotation, revocation, disabled-account, idempotency-key, and stale-ETag behavior;
+- service-account scope, tenant confusion, expiration, rotation, revocation, disabled-account, idempotency-key, byte substitution, concurrent upload, forced-review, encrypted replay, and stale-ETag behavior;
 - webhook signatures, stable retry IDs, dead-letter replay, delivery leasing, DNS rebinding, mixed DNS, private IPv4/IPv6, redirects, timeouts, and oversized responses;
 - direct audit-event update/delete and exception self-approval restrictions;
-- evidence-bundle tenant authorization, canonical digest/signature verification, source-PDF hash comparison, encrypted-key context binding, and tamper rejection;
-- certificate-request cross-tenant access, exact link-to-submission lineage, cancellation, expiry, concurrent claims, stale-lease recovery, terminal secret deletion, and error redaction;
+- evidence-bundle tenant authorization, user and service-account exporter identity, canonical digest/signature verification, source-PDF hash comparison, exact endorsement-page attestation, encrypted-key context binding, and tamper rejection;
+- certificate-request cross-tenant access, exact link-to-submission lineage, cancellation, expiry, concurrent claims, stale-lease recovery, terminal secret deletion, and configured SMTP credential/token/URL error redaction;
 - deterministic evaluation and `UNKNOWN` behavior for missing or incomparable
   values;
 - reminder retry, concurrency, renewal suppression, and provider outage; and

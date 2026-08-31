@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, unlink } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
+import { PDFDocument } from "@cantoo/pdf-lib";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { assertPdfMagicBytes } from "./security.js";
 
 export interface StoredDocument {
@@ -8,7 +10,8 @@ export interface StoredDocument {
   sha256: string;
   sizeBytes: number;
   detectedMime: "application/pdf";
-  pageCountEstimate: number;
+  /** Page count parsed by the trusted storage boundary, not supplied by the client. */
+  pageCount: number;
 }
 
 export interface PdfInspection {
@@ -31,6 +34,66 @@ export class UnsafeDocumentError extends Error {
 }
 
 const MAX_PAGE_COUNT = 75;
+const PAGE_COUNT_TIMEOUT_MS = 10_000;
+
+const parsePdfPageCountWithPdfJs = async (input: Uint8Array): Promise<number> => {
+  const loadingTask = getDocument({
+    data: new Uint8Array(input),
+    stopAtErrors: true,
+    useSystemFonts: false,
+  });
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    const document = await Promise.race([
+      loadingTask.promise,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new UnsafeDocumentError("PDF page validation timed out")),
+          PAGE_COUNT_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    if (!Number.isSafeInteger(document.numPages) || document.numPages < 1) {
+      throw new UnsafeDocumentError("PDF does not contain a valid page tree");
+    }
+    return document.numPages;
+  } catch (error) {
+    if (error instanceof UnsafeDocumentError) throw error;
+    throw new UnsafeDocumentError("PDF page structure could not be validated");
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    await loadingTask.destroy();
+  }
+};
+
+const parsePdfPageCountFromTree = async (input: Uint8Array): Promise<number> => {
+  try {
+    const document = await PDFDocument.load(input, {
+      ignoreEncryption: false,
+      throwOnInvalidObject: true,
+      updateMetadata: false,
+    });
+    const pageCount = document.getPageCount();
+    if (!Number.isSafeInteger(pageCount) || pageCount < 1) {
+      throw new UnsafeDocumentError("PDF does not contain a valid page tree");
+    }
+    return pageCount;
+  } catch (error) {
+    if (error instanceof UnsafeDocumentError) throw error;
+    throw new UnsafeDocumentError("PDF page tree could not be independently validated");
+  }
+};
+
+const parsePdfPageCount = async (input: Uint8Array): Promise<number> => {
+  const [renderingPageCount, treePageCount] = await Promise.all([
+    parsePdfPageCountWithPdfJs(input),
+    parsePdfPageCountFromTree(input),
+  ]);
+  if (renderingPageCount !== treePageCount) {
+    throw new UnsafeDocumentError("PDF contains an inconsistent page tree");
+  }
+  return treePageCount;
+};
 
 /**
  * Conservative byte-level triage. This is not a substitute for AV/CDR in a
@@ -94,6 +157,10 @@ export class FileSystemDocumentStore implements DocumentStore {
     if (inspection.pageCountEstimate > MAX_PAGE_COUNT) {
       throw new UnsafeDocumentError(`PDF exceeds the ${MAX_PAGE_COUNT}-page safety limit`);
     }
+    const pageCount = await parsePdfPageCount(input);
+    if (pageCount > MAX_PAGE_COUNT) {
+      throw new UnsafeDocumentError(`PDF exceeds the ${MAX_PAGE_COUNT}-page safety limit`);
+    }
 
     const sha256 = createHash("sha256").update(input).digest("hex");
     const id = randomUUID();
@@ -112,7 +179,7 @@ export class FileSystemDocumentStore implements DocumentStore {
       sha256,
       sizeBytes: input.byteLength,
       detectedMime: "application/pdf",
-      pageCountEstimate: inspection.pageCountEstimate,
+      pageCount,
     };
   }
 

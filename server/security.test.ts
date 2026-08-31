@@ -8,6 +8,7 @@ import {
   hasPdfMagicBytes,
   neutralizeCsvFormula,
   passwordHashNeedsUpgrade,
+  publicUploadUrl,
   verifyOpaqueToken,
   verifyPassword,
   verifyPasswordHashesSequentially,
@@ -89,6 +90,16 @@ describe("opaque tokens", () => {
     expect(first.token).not.toBe(second.token);
     expect(Buffer.from(first.token, "base64url")).toHaveLength(32);
     expect(first.tokenHash).toBe(hashOpaqueToken(first.token));
+  });
+
+  it("keeps public upload bearers in the URL fragment", () => {
+    const token = `v1.org-a.${"x".repeat(48)}`;
+    const url = new URL(publicUploadUrl("https://coi.example.test", token));
+
+    expect(url.pathname).toBe("/upload");
+    expect(url.search).toBe("");
+    expect(url.hash).toBe(`#token=${token}`);
+    expect(`${url.origin}${url.pathname}`).not.toContain(token);
   });
 });
 

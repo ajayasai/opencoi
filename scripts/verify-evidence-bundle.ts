@@ -187,7 +187,7 @@ export async function runEvidenceBundleVerifier(
       ? "Signer identity: trusted fingerprint matched.\n"
       : "Signer identity: NOT verified; compare the fingerprint through a trusted channel.\n";
     io.stdout(
-      `Evidence bundle integrity verified.\n${identityLine}Digest: ${result.envelope.integrity.digest.value}\nSigner key: ${result.envelope.integrity.signature.keyId}\nPublic-key fingerprint: ${result.envelope.integrity.signature.publicKeyFingerprint}\n${pdfLine}`,
+      `Evidence bundle integrity verified; v1 payload structure and invariants verified.\n${identityLine}Digest: ${result.envelope.integrity.digest.value}\nSigner key label (unauthenticated metadata): ${result.envelope.integrity.signature.keyId}\nPublic-key fingerprint: ${result.envelope.integrity.signature.publicKeyFingerprint}\n${pdfLine}`,
     );
     return 0;
   } catch (error) {

@@ -16,44 +16,46 @@ Commercial COI products already cover collection, OCR, reminders, and dashboards
 
 - **Explainable checks:** deterministic findings include stable reason codes, expected and observed values, the requirement version, and the evaluation date.
 - **Human authority:** OCR proposes; a reviewer confirms. Missing or unconfirmed evidence is never allowed to produce a pass.
-- **Page-linked provenance:** extracted parties, policies, limits, and endorsement mentions retain their normalized extracted line, submitted page, and confidence; the original proposal remains distinct from any human-corrected fact. The server checks citation consistency with client-submitted page text, while reviewer attestation establishes the link to the original PDF.
+- **Page-linked provenance:** extracted parties, policies, limits, and endorsement mentions retain their normalized extracted line, submitted page, and confidence; the original proposal remains distinct from any human-corrected fact. Strong endorsement evidence requires exact PDF pages, and a reviewer-confirmed evidence bundle signs those page attestations together with the source PDF digest.
 - **Honest exceptions:** an approval is scoped and time-bound, while the underlying failed finding stays visible.
 - **Auditable separation of duties:** the person who requests an exception cannot approve that same request.
 - **Local document processing:** PDF text extraction and OCR execute in the browser with PDF.js and Tesseract.js. Worker, WebAssembly, and English language assets are served by OpenCOI itself; no runtime OCR CDN or third-party OCR API receives document pages.
 - **Tracked collection:** initial and renewal requests connect one exact invitation to its eventual submission, with visible delivery state, expiry, cancellation, and bounded SMTP retries.
 - **Cryptographically portable decisions:** a versioned Ed25519-signed evidence bundle carries the source PDF digest, proposals, confirmed facts, rules, citations, findings, exceptions, status boundary, and audit checkpoint for offline verification.
 - **Standards-based sign-in without lock-in:** optional OpenID Connect uses Authorization Code, PKCE, state, and nonce while retaining a local break-glass account.
-- **Open integration surface:** tenant-bound least-privilege service accounts, a versioned OpenAPI 3.1 contract, idempotent writes, optimistic concurrency, an ordered event feed, and Standard Webhooks-compatible signed delivery are included.
-- **Public evidence and evaluation tooling:** original CC0 synthetic fixtures, vendor-neutral schemas, deterministic synthetic fact/citation scoring, published failure cases, a hardware-labelled scale workload, and a preregistered usability protocol make gaps visible rather than marketing around them.
+- **Open integration surface:** tenant-bound least-privilege service accounts, API certificate intake and evidence export, tracked request lifecycle operations, a versioned OpenAPI 3.1 contract, byte-aware idempotent writes, optimistic concurrency, an ordered event feed, and Standard Webhooks-compatible signed delivery are included.
+- **Public evidence and evaluation tooling:** original CC0 synthetic fixtures, vendor-neutral schemas, deterministic synthetic fact/citation scoring, a permission-aware head-to-head harness that preserves `NOT_TESTED`, published failure cases, a hardware-labelled scale workload, and a preregistered usability protocol make gaps visible rather than marketing around them.
+- **Upgrade integrity:** an ordered SHA-256 migration ledger, read-only plan/check commands, required-object drift checks, foreign-key validation, and documented backup/rollback procedures make database upgrades inspectable.
 - **Self-hosting:** one Node.js process, SQLite, and filesystem document storage make a small-team deployment understandable and back-upable.
 
 Open source does not automatically make software safer or more accurate. See the project's [competitive positioning](docs/COMPETITIVE_POSITIONING.md) for the claims OpenCOI will—and will not—make.
 
-## Shipped v0.3 scope
+## Shipped v0.4 scope
 
 | Intended capability | Status | What is included |
 | --- | --- | --- |
 | Vendor and contractor directory | Included | Create and edit vendor records, assign a vendor type, search and filter by document-check and lifecycle status. |
 | Required coverages by vendor type | Included | Publish versioned coverage profiles with minimum limits, document-period requirements, and named endorsement-evidence requirements. |
-| COI PDF upload | Included | Staff upload and scoped vendor upload links, with size, signature, encryption, active-content, and page-count checks. |
+| COI PDF upload | Included | Staff upload and scoped vendor upload links, with size, signature, encryption, active-content, and independent dual-parser page-tree checks. |
 | OCR-assisted extraction | Included | Browser-side PDF text-layer extraction with English Tesseract OCR fallback for scanned pages; insurer, policy number, dates, common limits, and common endorsement indications are proposed. |
 | Human confirmation | Included | Side-by-side PDF and field review for staff intake; vendor submissions remain unconfirmed until an authenticated reviewer attests to and re-evaluates the extracted facts. |
 | Deficiency warnings | Included | Explainable findings for missing coverage or policy fields, inadequate or absent limits, policy-period problems, and missing or insufficient endorsement evidence. |
 | Renewal reminders | Included | A due-soon queue based on dates printed on confirmed documents, plus a deduplicated reminder worker and optional TLS-only SMTP delivery. Transient email failures retry on the same row after minimum 15-minute and 60-minute backoffs, stopping after three total attempts; exact-attempt compare-and-set prevents a stale worker from completing a newer 30-minute claim. |
-| Vendor self-service upload | Included | Expiring, revocable bearer links with no vendor account required; submissions enter human review. Tracked initial and renewal requests preserve which exact invitation produced a submission. |
+| Vendor self-service upload | Included | Expiring, revocable bearer links with no vendor account required; fragment delivery and fixed authorization-header API requests keep new tokens out of request targets and browser history. Submissions enter human review, and tracked requests preserve which exact invitation produced them. |
 | Certificate requests | Included | Manual one-time sharing or optional queued SMTP, recipient and lifecycle history, cancellation, expiry, bounded retries, encrypted queued tokens, and exact upload-to-request lineage. SMTP acceptance is not represented as inbox delivery. |
 | Exception approval | Included | Finding-scoped request and decision workflow with rationale, expiration, and an audit trail; approval does not rewrite the base finding, and a requester cannot self-approve. |
 | Compliance-status export | Included | Server-generated, filter-aware CSV with formula-injection protection and document-scoped status language. |
-| Page-level extraction evidence | Included | Browser extraction proposals preserve a normalized source line, submitted page, and confidence. The server rejects citations that do not match the submitted page text; an authorized reviewer still verifies the original PDF. Corrections become manual evidence without rewriting the proposal. |
+| Page-level extraction evidence | Included | Browser extraction proposals preserve a normalized source line, submitted page, and confidence. `ATTACHED` and `HUMAN_VERIFIED` endorsement evidence on new submissions requires exact PDF pages; reviewer-confirmed signed bundles bind those attestations to the source PDF SHA-256. Corrections become manual evidence without rewriting the proposal. |
 | Standards-based authentication | Included | One explicitly tenant-bound OpenID Connect provider with Authorization Code, PKCE, state, nonce, verified identity binding, and local break-glass login. Local users with the same email in multiple organizations select an explicit workspace slug. |
-| API and integrations | Included | Scoped service accounts, `/api/v1`, OpenAPI 3.1, cursor pagination, idempotency, ETags, an ordered event feed, signed durable webhooks, retries, dead letters, replay, and SSRF-safe delivery. |
-| Signed evidence export | Included | Organization-specific Ed25519-signed JSON with a published schema and offline verifier; optional PDF-hash and separately trusted key-fingerprint checks prevent the embedded key from being mistaken for organization identity. |
-| Public evaluation tools | Included | Vendor-neutral extraction schemas, six original synthetic page-text cases, deterministic scores/citations, CI regression, a 10k-vendor workload, and a privacy-safe usability study kit. |
+| API and integrations | Included | Scoped service accounts, `/api/v1`, certificate PDF submission/read/evidence export, tracked request create/list/read/cancel operations, OpenAPI 3.1, cursor pagination, encrypted byte-aware idempotency replay, ETags, an ordered event feed, signed durable webhooks, retries, dead letters, replay, and SSRF-safe delivery. API certificate submissions always enter human review. |
+| Signed evidence export | Included | Organization-specific Ed25519-signed JSON with a published schema and strict payload/invariant-checking offline verifier; optional PDF-hash and separately trusted key-fingerprint checks prevent the embedded key from being mistaken for organization identity. |
+| Public evaluation tools | Included | Vendor-neutral extraction schemas, six original synthetic page-text cases, deterministic scores/citations, a strict permission-aware head-to-head harness, CI regression, a 10k-vendor workload, and a privacy-safe usability study kit. Commercial results and participant outcomes remain unpublished until lawful real runs exist. |
+| Database upgrade controls | Included | Ordered checksummed migrations, v0.3 schema adoption without row rewrites, read-only plan/check commands, drift and future-version refusal, rollback tests, and foreign-key verification. |
 | Live insurer connectivity | Deliberately excluded | No carrier, broker, or agency-management-system connection and no representation of live policy status. See the [roadmap](ROADMAP.md). |
 
 The release also includes a dashboard, review queue, separate document lifecycle state, original-file SHA-256 display, role-checked operations, and an append-only SHA-256-linked audit history.
 
-Limit comparison in v0.3 is USD-only. Non-USD document normalization and explicit currency-mismatch findings are roadmap work; the configuration API rejects other currencies rather than making an unsafe numeric comparison.
+Limit comparison in v0.4 is USD-only. Non-USD document normalization and explicit currency-mismatch findings are roadmap work; the configuration API rejects other currencies rather than making an unsafe numeric comparison.
 
 ## Status language
 
@@ -97,7 +99,9 @@ npm run check
 npm run build
 npm run test:coverage
 npm run benchmark:extract
+npm run benchmark:head-to-head -- benchmark/corpus/synthetic-text-v1.json benchmark/examples/head-to-head-synthetic-v1.manifest.json data/head-to-head-synthetic-v1
 npm run benchmark:scale
+npm run db:migrate -- --plan
 ```
 
 All example data is synthetic. Never use a real COI as a test fixture or issue attachment.
@@ -160,7 +164,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component and trust boundar
 - [OCR and human review](docs/OCR_AND_REVIEW.md)
 - [API and webhooks](docs/API.md)
 - [Signed evidence bundles](docs/EVIDENCE_BUNDLES.md) and [JSON Schema](docs/schemas/evidence-bundle-v1.schema.json)
-- [Public extraction benchmark](benchmark/README.md) and [head-to-head status](benchmark/HEAD_TO_HEAD_STATUS.md)
+- [Public extraction benchmark](benchmark/README.md), [head-to-head protocol](benchmark/HEAD_TO_HEAD.md), and [evidence status](benchmark/HEAD_TO_HEAD_STATUS.md)
+- [Database migrations](docs/DATABASE_MIGRATIONS.md)
 - [Accessibility](docs/ACCESSIBILITY.md) and [usability evidence kit](research/usability/README.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Backup and restore](docs/BACKUP_RESTORE.md)

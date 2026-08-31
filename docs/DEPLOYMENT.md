@@ -154,7 +154,7 @@ Compose creates the `opencoi-data` named volume and mounts it at `/app/data`. St
 
 ## Evidence-signing key operations
 
-The first signed export for an organization creates one Ed25519 key. Its private key is encrypted in SQLite using `TOKEN_PEPPER`; its public key and SHA-256 fingerprint are included in exports. Back up the database and preserve the pepper together. Publish the fingerprint through a separately controlled channel when another party needs to authenticate the signer, rather than only verify self-contained integrity. v0.3 has no UI key-rotation workflow; document any emergency key replacement outside the application before changing deployment key material.
+The first signed export for an organization creates one Ed25519 key. Its private key is encrypted in SQLite using `TOKEN_PEPPER`; its public key and SHA-256 fingerprint are included in exports. Back up the database and preserve the pepper together. Publish the fingerprint through a separately controlled channel when another party needs to authenticate the signer, rather than only verify self-contained integrity. v0.4 has no UI key-rotation workflow; document any emergency key replacement outside the application before changing deployment key material.
 
 ## Webhook worker
 
@@ -204,19 +204,30 @@ docker compose --profile webhooks --profile requests up --build -d
 1. Read the target release notes and compatibility notices.
 2. Take and verify a stopped-service backup.
 3. Check out the target release tag.
-4. Run `docker compose build --pull` and `docker compose up -d`.
-5. Confirm the health endpoint, sign-in, a synthetic upload, and the reminder status.
+4. Build the target image and preview its database migration plan.
+5. Apply the migrations explicitly while the service and workers are stopped.
+6. Start the target release and confirm the migration check, health endpoint,
+   sign-in, a synthetic upload, and reminder status.
 
 ```sh
 git fetch --tags --prune
 git checkout vX.Y.Z
 docker compose build --pull
+docker compose stop
+docker compose run --rm --no-deps opencoi node dist/server/cli/migrate.js --plan
+docker compose run --rm --no-deps opencoi node dist/server/cli/migrate.js
 docker compose up -d
 docker compose ps
+docker compose exec opencoi node dist/server/cli/migrate.js --check
 curl --fail --silent --show-error http://127.0.0.1:4174/api/health
 ```
 
-Application startup may advance the SQLite schema. A container-image rollback does not necessarily reverse a schema change; restore the pre-upgrade data backup when release notes require it.
+Application startup invokes the same checksummed migration runner for backward
+compatibility, but the explicit stopped-service procedure makes the plan and
+failure boundary visible before traffic resumes. See
+[DATABASE_MIGRATIONS.md](DATABASE_MIGRATIONS.md). A container-image rollback
+does not reverse a schema change; restore the pre-upgrade data backup when
+release notes do not explicitly declare backward schema compatibility.
 
 ## Operational security
 

@@ -44,6 +44,22 @@ document, configured requirements, and an evaluation date.
 - unambiguous local sign-in when the same email belongs to multiple workspaces; and
 - safer outbound-worker leasing so concurrent or stale webhook workers cannot overwrite another worker's result.
 
+## v0.4: page-addressable evidence and integration completeness (shipped)
+
+- exact PDF source-page requirements for new `ATTACHED` and `HUMAN_VERIFIED`
+  endorsement evidence, with reviewer attestations bound into signed evidence
+  bundles alongside the source-document SHA-256;
+- service-account certificate PDF intake and read APIs, signed evidence export,
+  and tracked certificate-request list/create/read/cancel operations;
+- forced human review for every API-submitted document, service-account event
+  attribution, byte-aware idempotency, and encrypted replay payloads;
+- a strict authorization- and publication-aware head-to-head harness that
+  applies the same scorer to supplied prediction artifacts and records missing
+  commercial results as `NOT_TESTED`; and
+- an ordered SHA-256 migration ledger with read-only plan/check commands,
+  structural adoption of existing v0.3 databases, drift refusal, foreign-key
+  validation, and rollback coverage.
+
 ## v0.x: remaining hardening and operational maturity
 
 Priorities after the first usable release include:
@@ -59,7 +75,9 @@ Priorities after the first usable release include:
 - documented backup, restore, deletion, and upgrade procedures;
 - browser/assistive-technology accessibility testing, localization foundations, and timezone-safe dates;
 - a stable, typed rule specification and broader machine-to-machine export coverage; and
-- concurrent-write, storage-volume, failover, and tenant-isolation test suites for larger deployments.
+- shared object storage, a database topology designed for multiple replicas,
+  distributed rate limits and worker leases, plus concurrent-write,
+  storage-volume, failover, and tenant-isolation test suites for larger deployments.
 
 Security requirements are not deferred merely because they appear in this
 section. A deployment exposed to untrusted files or multiple organizations must

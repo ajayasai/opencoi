@@ -1,6 +1,12 @@
 import type { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { appendAuditEvent, listAuditEvents, verifyAuditChain } from "./audit.js";
+import {
+  appendAuditEvent,
+  auditActorLabel,
+  listAuditEvents,
+  parseAuditMetadata,
+  verifyAuditChain,
+} from "./audit.js";
 import { bootstrapOrganization, openDatabase } from "./db.js";
 
 const databases: DatabaseSync[] = [];
@@ -34,6 +40,20 @@ afterEach(() => {
 });
 
 describe("hash-chained audit events", () => {
+  it("labels API events with a resolved service account and an explicit fallback", () => {
+    const row = {
+      actor_type: "system" as const,
+      actor_user_id: null,
+      metadata_json: JSON.stringify({ serviceAccountId: "service-account-a" }),
+    };
+
+    expect(auditActorLabel(row, { serviceAccountName: "ERP synchronizer" })).toBe(
+      "Service account: ERP synchronizer",
+    );
+    expect(auditActorLabel(row)).toBe("Service account service-account-a");
+    expect(parseAuditMetadata("not-json")).toEqual({});
+  });
+
   it("creates an independently verifiable chain for each organization", () => {
     const database = setup();
     const first = appendAuditEvent(database, "org-a", {

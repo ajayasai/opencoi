@@ -1,12 +1,12 @@
 import "dotenv/config";
 import { loadConfig } from "../config.js";
 import { openDatabase } from "../db.js";
+import { migrateDatabase } from "../migrations.js";
 import { runReminderCycle } from "../services/reminders.js";
-import { ensureApiSchema } from "../services/schema.js";
 
 const config = loadConfig();
-const database = openDatabase(config.databasePath);
-ensureApiSchema(database);
+const database = openDatabase(config.databasePath, { initialize: false });
+migrateDatabase(database);
 try {
   const result = await runReminderCycle(database, config);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

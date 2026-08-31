@@ -66,19 +66,19 @@ describe("public synthetic text benchmark", () => {
       system: {
         id: "opencoi-shared-parser",
         name: "OpenCOI shared text parser",
-        version: "v0.2.0",
+        version: "v0.4.0",
       },
     };
     const publishedScore = scoreBenchmark(corpus, publishedPredictions, CORPUS_SHA256);
     const predictionBytes = readFileSync(
       fileURLToPath(
-        new URL("./results/synthetic-text-v1-opencoi-v0.2.0.predictions.json", import.meta.url),
+        new URL("./results/synthetic-text-v1-opencoi-v0.4.0.predictions.json", import.meta.url),
       ),
       "utf8",
     );
     const scoreBytes = readFileSync(
       fileURLToPath(
-        new URL("./results/synthetic-text-v1-opencoi-v0.2.0.score.json", import.meta.url),
+        new URL("./results/synthetic-text-v1-opencoi-v0.4.0.score.json", import.meta.url),
       ),
       "utf8",
     );

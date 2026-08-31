@@ -41,6 +41,9 @@ import {
 } from "./CertificateCorrectionEditor";
 import "./review.css";
 
+type CertificateEvidence = NonNullable<CertificateRecord["evidence"]>[number];
+type ExtractionCitation = Extract<CertificateEvidence, { kind: "extraction_citation" }>;
+
 function FindingIcon({ finding }: { finding: FindingRecord }) {
   if (finding.outcome === "PASS") return <Check size={17} />;
   if (finding.outcome === "FAIL") return <X size={17} />;
@@ -203,6 +206,9 @@ export function CertificateDetailPage() {
   const isPending = certificate.documentStatus === "pending_review";
   const isRejected = certificate.documentStatus === "rejected";
   const isConfirmed = certificate.documentStatus === "confirmed";
+  const extractionEvidence = (certificate.evidence ?? []).filter(
+    (item): item is ExtractionCitation => item.kind === "extraction_citation",
+  );
 
   const confirmExistingExtraction = async () => {
     if (!sourceReviewed || !correctionDraft || !canReview) return;
@@ -576,7 +582,7 @@ export function CertificateDetailPage() {
                       <ul>
                         {policy.endorsements.map((endorsement) => (
                           <li
-                            key={`${endorsement.name}-${endorsement.formCode ?? ""}-${endorsement.evidenceLevel}`}
+                            key={`${endorsement.name}-${endorsement.formCode ?? ""}-${endorsement.evidenceLevel}-${endorsement.sourcePages?.join(",") ?? "no-pages"}`}
                           >
                             <FileCheck2 size={13} />
                             <strong>{endorsement.name}</strong>
@@ -593,6 +599,17 @@ export function CertificateDetailPage() {
                             >
                               {titleCase(endorsement.evidenceLevel)}
                             </Badge>
+                            {endorsement.sourcePages?.map((page) => (
+                              <a
+                                key={page}
+                                href={`/api/certificates/${certificate.id}/view#page=${page}`}
+                                target="_blank"
+                                rel="noreferrer"
+                                title={`Open the original PDF at endorsement source page ${page}`}
+                              >
+                                Page {page}
+                              </a>
+                            ))}
                           </li>
                         ))}
                       </ul>
@@ -656,12 +673,12 @@ export function CertificateDetailPage() {
               <code>{certificate.sha256}</code>
             </div>
           </Card>
-          {(certificate.evidence?.length ?? 0) > 0 && (
+          {extractionEvidence.length > 0 && (
             <Card className="evidence-citations-card">
               <details>
                 <summary>
                   <FileCheck2 size={17} /> Page-linked extraction evidence (
-                  {certificate.evidence?.length ?? 0})
+                  {extractionEvidence.length})
                 </summary>
                 <p>
                   These are client-submitted extraction proposals, normally produced by the browser,
@@ -672,7 +689,7 @@ export function CertificateDetailPage() {
                     : "They remain unverified until a reviewer checks the original PDF."}
                 </p>
                 <ul>
-                  {certificate.evidence?.map((citation) => (
+                  {extractionEvidence.map((citation) => (
                     <li
                       key={`${citation.field}-${citation.policyIndex ?? "document"}-${citation.endorsementIndex ?? "field"}-${citation.limitType ?? "value"}-${citation.page}-${citation.rawText}`}
                     >
