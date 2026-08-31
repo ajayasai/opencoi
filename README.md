@@ -111,6 +111,7 @@ For upgrades, reverse proxy guidance, and SMTP configuration, follow [docs/DEPLO
 ## Production checklist
 
 - Put the application behind HTTPS; set the exact public origin (`OPENCOI_APP_ORIGIN` in Compose or `APP_ORIGIN` for direct Node.js), set `TRUST_PROXY_HOPS` to the exact controlled proxy count, and keep secure cookies enabled. Leave the hop count at `0` for direct access.
+- Keep edge abuse controls enabled. OpenCOI enforces a 300-request-per-minute global ceiling per resolved client address and stricter sign-in and public-upload limits, but its in-process counters are not a substitute for proxy or gateway protection.
 - Generate and preserve a 32+ byte `TOKEN_PEPPER`; store bootstrap and SMTP credentials in a secrets manager.
 - Sign in once, then remove the five `BOOTSTRAP_*` values and recreate the container.
 - Keep `/app/data` on encrypted, access-controlled persistent storage and back up the database and uploads together.

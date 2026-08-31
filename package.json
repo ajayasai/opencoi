@@ -1,6 +1,6 @@
 {
   "name": "opencoi",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Explainable, self-hosted certificate of insurance tracking.",
   "license": "AGPL-3.0-only",
@@ -42,6 +42,7 @@
     "compression": "^1.8.1",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
     "helmet": "^8.1.0",
     "lucide-react": "^1.37.0",
     "multer": "^2.0.2",

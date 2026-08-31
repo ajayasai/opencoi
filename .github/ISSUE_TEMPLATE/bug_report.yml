@@ -25,7 +25,7 @@ body:
     id: version
     attributes:
       label: OpenCOI version or commit
-      placeholder: v0.1.1 or a full commit SHA
+      placeholder: v0.1.2 or a full commit SHA
     validations:
       required: true
 

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type Request, type RequestHandler, type Response, Router } from "express";
+import { rateLimit } from "express-rate-limit";
 import multer from "multer";
 import { z } from "zod";
 import { buildComplianceStatusCsv } from "../../shared/csv.js";
@@ -42,7 +43,6 @@ import {
   csrfCookieName,
   csrfCookieOptions,
   enforceTrustedOrigin,
-  rateLimit,
   requestAuditContext,
   requireCsrf,
   requireRole,
@@ -270,7 +270,14 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
 
   router.post(
     "/auth/login",
-    rateLimit({ windowMs: 15 * 60_000, max: 20, prefix: "login" }),
+    rateLimit({
+      windowMs: 15 * 60_000,
+      limit: 20,
+      standardHeaders: "draft-8",
+      legacyHeaders: false,
+      handler: (_request, _response, next) =>
+        next(new HttpError(429, "Too many requests; try again later")),
+    }),
     trustedOrigin,
     asyncRoute(async (request, response) => {
       const input = loginSchema.parse(request.body);
@@ -335,7 +342,14 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
     }),
   );
 
-  const publicLimiter = rateLimit({ windowMs: 15 * 60_000, max: 100, prefix: "public-upload" });
+  const publicLimiter = rateLimit({
+    windowMs: 15 * 60_000,
+    limit: 100,
+    standardHeaders: "draft-8",
+    legacyHeaders: false,
+    handler: (_request, _response, next) =>
+      next(new HttpError(429, "Too many requests; try again later")),
+  });
   const requireActivePublicLink: RequestHandler = (request, _response, next) => {
     try {
       // Reject arbitrary or expired bearer tokens before Multer allocates a

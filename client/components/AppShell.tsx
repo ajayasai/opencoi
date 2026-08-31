@@ -112,7 +112,7 @@ export function AppShell({ children, actions }: { children: ReactNode; actions?:
         <div className="sidebar__footer">
           <a href="https://github.com/ajayasai/opencoi" target="_blank" rel="noreferrer">
             Open-source project
-            <span>v0.1.1</span>
+            <span>v0.1.2</span>
           </a>
         </div>
       </aside>

@@ -2,10 +2,11 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import compression from "compression";
 import express, { type Express } from "express";
+import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
 import type { AppConfig } from "./config.js";
 import type { OpenCoiDatabase } from "./db.js";
-import { errorHandler, notFound } from "./http/errors.js";
+import { errorHandler, HttpError, notFound } from "./http/errors.js";
 import { createApiRouter } from "./http/routes.js";
 import { ensureApiSchema } from "./services/schema.js";
 import type { DocumentStore } from "./storage.js";
@@ -50,6 +51,18 @@ export const createApp = (options: CreateAppOptions): Express => {
       crossOriginResourcePolicy: { policy: "same-origin" },
     }),
   );
+  // Bound application work—including health checks and static-file reads—per
+  // client. Sensitive endpoints retain their stricter, purpose-specific limits.
+  app.use(
+    rateLimit({
+      windowMs: 60_000,
+      limit: 300,
+      standardHeaders: "draft-8",
+      legacyHeaders: false,
+      handler: (_request, _response, next) =>
+        next(new HttpError(429, "Too many requests; try again later")),
+    }),
+  );
   app.use(compression());
   app.use(express.json({ limit: "1mb", strict: true }));
 
@@ -59,7 +72,7 @@ export const createApp = (options: CreateAppOptions): Express => {
     response.json({
       data: {
         status: database.ok === 1 ? "ok" : "degraded",
-        version: "0.1.1",
+        version: "0.1.2",
       },
     });
   });

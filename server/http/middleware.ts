@@ -26,15 +26,15 @@ interface SessionLookupRow extends SessionRow {
   organization_name: string;
 }
 
-const parseCookies = (header: string | undefined): Readonly<Record<string, string>> => {
-  const result: Record<string, string> = {};
+const parseCookies = (header: string | undefined): ReadonlyMap<string, string> => {
+  const result = new Map<string, string>();
   for (const part of (header ?? "").split(";")) {
     const separator = part.indexOf("=");
     if (separator < 1) continue;
     const name = part.slice(0, separator).trim();
     const raw = part.slice(separator + 1).trim();
     try {
-      result[name] = decodeURIComponent(raw);
+      result.set(name, decodeURIComponent(raw));
     } catch {
       // Ignore malformed cookie values instead of throwing before authentication.
     }
@@ -60,7 +60,7 @@ export const csrfCookieOptions = (config: AppConfig) => ({
   maxAge: config.sessionTtlMs,
 });
 
-export const cookiesFor = (request: Request): Readonly<Record<string, string>> =>
+export const cookiesFor = (request: Request): ReadonlyMap<string, string> =>
   parseCookies(request.headers.cookie);
 
 const mapUser = (row: SessionLookupRow): UserRow => ({
@@ -79,7 +79,7 @@ const mapUser = (row: SessionLookupRow): UserRow => ({
 export const authenticate =
   (database: OpenCoiDatabase, config: AppConfig): RequestHandler =>
   (request, response, next) => {
-    const token = cookiesFor(request)[config.sessionCookieName];
+    const token = cookiesFor(request).get(config.sessionCookieName);
     if (!token) {
       next(new HttpError(401, "Authentication required"));
       return;
@@ -112,7 +112,7 @@ export const authenticate =
 
     const repository = createOrganizationRepository(database, row.organization_id);
     repository.touchSession(row.id, now);
-    let csrfToken = cookiesFor(request)[csrfCookieName(config)] ?? "";
+    let csrfToken = cookiesFor(request).get(csrfCookieName(config)) ?? "";
     if (!csrfToken || !verifyOpaqueToken(csrfToken, row.csrf_token_hash, config.tokenPepper)) {
       csrfToken = randomToken();
       // A missing readable CSRF cookie should not invalidate a valid HttpOnly session.
@@ -144,7 +144,7 @@ export const requireCsrf =
   (request, response, next) => {
     const auth = authContext(response);
     const header = request.header("X-CSRF-Token") ?? "";
-    const cookie = cookiesFor(request)[csrfCookieName(config)] ?? "";
+    const cookie = cookiesFor(request).get(csrfCookieName(config)) ?? "";
     const headerValid =
       Boolean(header) &&
       verifyOpaqueToken(header, auth.session.csrf_token_hash, config.tokenPepper);
@@ -189,43 +189,6 @@ export const requireRole =
     }
     next();
   };
-
-interface RateBucket {
-  count: number;
-  resetAt: number;
-}
-
-export const rateLimit = (options: {
-  windowMs: number;
-  max: number;
-  prefix: string;
-}): RequestHandler => {
-  const buckets = new Map<string, RateBucket>();
-  return (request, response, next) => {
-    const now = Date.now();
-    const key = `${options.prefix}:${request.ip ?? request.socket.remoteAddress ?? "unknown"}`;
-    let bucket = buckets.get(key);
-    if (!bucket || bucket.resetAt <= now) {
-      bucket = { count: 0, resetAt: now + options.windowMs };
-      buckets.set(key, bucket);
-    }
-    bucket.count += 1;
-    if (bucket.count > options.max) {
-      response.setHeader(
-        "Retry-After",
-        String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))),
-      );
-      next(new HttpError(429, "Too many requests; try again later"));
-      return;
-    }
-    if (buckets.size > 10_000) {
-      for (const [bucketKey, value] of buckets) {
-        if (value.resetAt <= now) buckets.delete(bucketKey);
-      }
-    }
-    next();
-  };
-};
 
 export const requestAuditContext = (request: Request) => ({
   ipAddress: request.ip,

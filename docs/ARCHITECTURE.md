@@ -61,7 +61,7 @@ The `server/` process owns the following boundaries:
 - local-password authentication and session lifecycle;
 - organization scoping and role authorization;
 - trusted-origin and CSRF enforcement;
-- request and public-link rate limiting;
+- a global per-client request ceiling plus stricter login and public-link limits;
 - vendor, requirement, document, exception, reminder, export, and audit routes;
 - PDF byte-level triage and filesystem storage;
 - canonical server-side evaluation and persisted findings;

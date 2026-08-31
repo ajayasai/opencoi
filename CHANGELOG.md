@@ -8,6 +8,17 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 
 - Follow the evidence-driven priorities in the [roadmap](ROADMAP.md); entries here are not delivery commitments.
 
+## [0.1.2] - 2026-08-31
+
+### Security
+
+- Applied a global per-client request limit before health checks, API handlers, and static-file reads while retaining stricter login and public-upload limits.
+- Replaced cookie-name writes to a plain object with a `Map`, preventing attacker-controlled cookie names from reaching object properties.
+
+### Tests
+
+- Added regression coverage for prototype-like cookie names, malformed cookie values, and the global request ceiling.
+
 ## [0.1.1] - 2026-08-31
 
 ### Fixed
@@ -49,6 +60,7 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 - PDF triage is not antivirus or content disarm/reconstruction. Internet-facing operators should add controls appropriate to their threat model.
 - Local accounts are included; SSO, MFA, and managed identity provisioning are not.
 
-[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/ajayasai/opencoi/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ajayasai/opencoi/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ajayasai/opencoi/releases/tag/v0.1.0

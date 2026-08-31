@@ -216,6 +216,24 @@ describe("OpenCOI API integration", () => {
     expect(await attemptFromDistinctForwardedAddresses(proxiedApp)).toBe(401);
   });
 
+  it("rate-limits every route before accepting unbounded work", async () => {
+    const limitedApp = createApp({
+      config,
+      database,
+      documentStore: store,
+      staticDirectory: false,
+    });
+    for (let requestNumber = 0; requestNumber < 300; requestNumber += 1) {
+      await request(limitedApp).get("/api/health").expect(200);
+    }
+    const limited = await request(limitedApp).get("/api/health").expect(429);
+    const retryAfter = Number(limited.headers["retry-after"]);
+    expect(retryAfter).toBeGreaterThanOrEqual(1);
+    expect(retryAfter).toBeLessThanOrEqual(60);
+    expect(limited.headers["content-security-policy"]).toContain("default-src 'self'");
+    expect(limited.body).toEqual({ error: "Too many requests; try again later" });
+  });
+
   it("uploads and deterministically evaluates a staff-confirmed certificate", async () => {
     setupVendor();
     const { agent, csrf } = await login();

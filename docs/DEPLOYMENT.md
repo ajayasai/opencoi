@@ -93,6 +93,11 @@ Set `OPENCOI_APP_ORIGIN` to the exact browser-visible origin, with no path or tr
 
 Set `TRUST_PROXY_HOPS` to the exact number of controlled proxy hops between the browser and OpenCOI (`1` for the single same-host proxy topology above). This lets audit records and application throttles use the real client address without trusting arbitrary forwarding headers. The default is `0`; keep it at `0` for direct access. Every trusted proxy must discard or overwrite inbound `X-Forwarded-For` rather than appending to an untrusted client-supplied chain. A wrong value can either collapse all clients into one rate-limit bucket or let callers spoof their address.
 
+OpenCOI permits at most 300 requests per minute for one resolved client address,
+with stricter limits on sign-in and public-upload routes. This in-process control
+is a last line of defense, not an edge protection service. Keep proxy or gateway
+connection limits, body limits, timeouts, and abuse controls enabled as well.
+
 If direct network exposure is unavoidable, explicitly set `OPENCOI_BIND_ADDRESS=0.0.0.0`, leave `TRUST_PROXY_HOPS=0`, and provide TLS and network access controls elsewhere; loopback is the safer default.
 
 ## Persistent storage
