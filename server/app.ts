@@ -59,7 +59,7 @@ export const createApp = (options: CreateAppOptions): Express => {
     response.json({
       data: {
         status: database.ok === 1 ? "ok" : "degraded",
-        version: "0.1.0",
+        version: "0.1.1",
       },
     });
   });

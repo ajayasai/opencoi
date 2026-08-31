@@ -76,6 +76,7 @@ jobs:
           mkdir -p "release/stage/${archive_root}"
           git archive "$GITHUB_SHA" | tar -x -C "release/stage/${archive_root}"
           cp -R dist "release/stage/${archive_root}/dist"
+          npm sbom --omit=dev --sbom-format=cyclonedx > "release/${archive_root}.cdx.json"
           npm prune --omit=dev
           mkdir -p "release/stage/${archive_root}/third_party_licenses/runtime"
           npm run licenses:audit -- \
@@ -91,7 +92,6 @@ jobs:
               -print0
           )
           tar -C release/stage -czf "release/${archive_root}.tar.gz" "${archive_root}"
-          npm sbom --omit=dev --sbom-format=cyclonedx > "release/${archive_root}.cdx.json"
           (
             cd release
             sha256sum "${archive_root}.tar.gz" "${archive_root}.cdx.json" > SHA256SUMS

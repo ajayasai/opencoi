@@ -8,6 +8,14 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 
 - Follow the evidence-driven priorities in the [roadmap](ROADMAP.md); entries here are not delivery commitments.
 
+## [0.1.1] - 2026-08-31
+
+### Fixed
+
+- Made the application archive self-contained by including the tagged source tree alongside the compiled application.
+- Added fail-closed third-party license auditing, runtime notices, and a machine-readable license inventory to release artifacts and container images.
+- Generated the production-only CycloneDX SBOM before pruning development dependencies so npm can validate the complete installed dependency tree.
+
 ## [0.1.0] - 2026-08-31
 
 ### Added
@@ -41,5 +49,6 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 - PDF triage is not antivirus or content disarm/reconstruction. Internet-facing operators should add controls appropriate to their threat model.
 - Local accounts are included; SSO, MFA, and managed identity provisioning are not.
 
-[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/ajayasai/opencoi/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ajayasai/opencoi/releases/tag/v0.1.0
