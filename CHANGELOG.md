@@ -8,6 +8,16 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 
 - Follow the evidence-driven priorities in the [roadmap](ROADMAP.md); entries here are not delivery commitments.
 
+## [0.2.1] - 2026-08-31
+
+### Fixed
+
+- Isolated the Vite client build from server-only `.env` settings so its JSX
+  transform and React runtime cannot select incompatible development/production
+  variants.
+- Extended production-build verification to reject both React's development
+  runtime and development JSX transform before an archive or container can ship.
+
 ## [0.2.0] - 2026-08-31
 
 ### Added

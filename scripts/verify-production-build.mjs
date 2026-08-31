@@ -28,6 +28,9 @@ for (const path of browserScripts) {
   if (source.includes("Download the React DevTools for a better development experience")) {
     throw new Error(`Production output contains React's development runtime: ${path}`);
   }
+  if (source.includes("jsxDEV")) {
+    throw new Error(`Production output contains React's development JSX transform: ${path}`);
+  }
 }
 
 process.stdout.write(
