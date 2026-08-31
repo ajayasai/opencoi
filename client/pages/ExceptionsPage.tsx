@@ -255,7 +255,16 @@ export function ExceptionsPage() {
                         <X size={15} />
                         Reject
                       </Button>
-                      <Button size="sm" onClick={() => openDecision(item, "approved")}>
+                      <Button
+                        size="sm"
+                        disabled={item.requestedByUserId === user?.id}
+                        title={
+                          item.requestedByUserId === user?.id
+                            ? "A different administrator must approve your request"
+                            : undefined
+                        }
+                        onClick={() => openDecision(item, "approved")}
+                      >
                         <Check size={15} />
                         Approve
                       </Button>

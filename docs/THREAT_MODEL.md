@@ -101,11 +101,11 @@ a security certification.
 | T4 | Code, markup, query, log, or prompt injection through document content | Treat extracted text and metadata as attacker-controlled. Parameterize queries, encode output by context, bound string sizes, neutralize control characters in logs, and never execute document instructions. Any future AI integration must isolate document text as data, use a fixed output schema, have no ambient tools, and require human confirmation. |
 | T5 | OCR error or ambiguous mapping creates a false successful result | Preserve raw candidates, confidence, page and location, corrections, reviewer, and timestamps. Require confirmation for identity, dates, policy mapping, monetary limits, and endorsement evidence. Missing, contradictory, or incomparable data is `UNKNOWN`/`Needs review`, never zero or pass. |
 | T6 | Requirement or evaluation tampering | Limit draft, publish, and assignment actions by role. Version published requirements immutably, snapshot canonical inputs and engine version, hash where practical, and record safe audit events. Identical canonical inputs must produce identical base findings. |
-| T7 | Exception abuse hides a deficiency | Keep base findings immutable. Record requester, approver, rationale, scope, compensating controls, and effective dates separately. Support separation of duties and prevent self-approval when configured. An expired or wrong-scope exception has no effect. |
-| T8 | Unauthorized or dangerous exports | Reauthorize at generation and download, audit both, minimize columns, use short-lived private artifacts, and neutralize cells beginning with `=`, `+`, `-`, or `@`. Never place bearer tokens or hidden document text in exports. |
-| T9 | Reminder leakage, spam, or duplicate delivery | Put a link—not a COI or detailed deficiency—in email; keep subject lines neutral. Use deterministic idempotency keys, recipient and tenant rate caps, bounded retries, bounce/suppression handling, and cancellation of obsolete reminders after a renewal. |
+| T7 | Exception abuse hides a deficiency | Keep base findings immutable. Record requester, approver, rationale, scope, compensating controls, and effective dates separately. Prevent a requester from approving the same exception. An expired or wrong-scope exception has no effect. |
+| T8 | Unauthorized or dangerous exports | Reauthorize and audit generation, minimize CSV columns, and neutralize cells beginning with `=`, `+`, `-`, or `@`. Treat full signed evidence bundles as sensitive document derivatives because they intentionally include extracted page text and decision context. Never include bearer tokens. Protect signing private keys and require an out-of-band fingerprint when signer identity matters. |
+| T9 | Reminder or request-email leakage, spam, or duplicate delivery | Put a single-use link—not a COI or detailed deficiency—in request email; keep subject lines neutral. Encrypt queued link material, erase it on terminal state, use deterministic identities and atomic leases, bound retries, and cancel obsolete requests after submission. SMTP acceptance must not be labelled inbox delivery or opening. Add recipient and tenant rate caps plus bounce/suppression handling before high-volume use. |
 | T10 | Sensitive data appears in telemetry, logs, temporary files, or backups | Never log raw tokens, session IDs, PDFs, full OCR text, credentials, or email bodies. Encrypt transport and managed storage, restrict operational access, define retention for each derivative and backup, and test deletion and restoration. Exclude documents from crash reports and support bundles. |
-| T11 | Session theft, credential attacks, OIDC mix-up, login CSRF, or privilege persistence | For OIDC, pin the exact issuer and organization, use Authorization Code with PKCE, state, nonce, one-use transactions, and exact callback URLs; bind immutable issuer/subject identities only to pre-provisioned active users and never derive roles from untrusted claims. If local passwords are supported, use a modern memory-hard password hash and breached-password screening. Use Secure, HttpOnly, SameSite cookies, CSRF defenses, rotation, short privileged sessions, rate limits, MFA for sensitive roles, and reauthentication for role, export, and exception changes. A role downgrade must invalidate privileged sessions. |
+| T11 | Session theft, credential attacks, OIDC mix-up, login CSRF, tenant-membership disclosure, or privilege persistence | For OIDC, pin the exact issuer and organization, use Authorization Code with PKCE, state, nonce, one-use transactions, and exact callback URLs; bind immutable issuer/subject identities only to pre-provisioned active users and never derive roles from untrusted claims. For duplicate local emails, apply the optional workspace slug during candidate selection but reveal ambiguity only after valid credentials match multiple tenants. If local passwords are supported, use a modern memory-hard password hash and breached-password screening. Use Secure, HttpOnly, SameSite cookies, CSRF defenses, rotation, short privileged sessions, rate limits, MFA for sensitive roles, and reauthentication for role, export, and exception changes. A role downgrade must invalidate privileged sessions. |
 | T12 | Parser, package, build, or release supply-chain compromise | Pin dependencies with a lockfile, minimize parser and OCR dependencies, run automated vulnerability and secret scanning, review install scripts, publish an SBOM, protect release credentials, and sign or attest releases where practical. |
 | T13 | Resource exhaustion through uploads, OCR, searches, exports, or reminders | Apply per-request and per-organization quotas, concurrency caps, timeouts, pagination, job backpressure, and cost monitoring. A failure must not leave an invitation consumed, partial document trusted, or reminder duplicated. |
 | T14 | A document assessment is mistaken for live policy status | Use the bounded status vocabulary, show the document issue/revision and evaluation dates, retain the source, and display the product disclaimer beside results and exports. Never infer cancellation status or current coverage from silence. |
@@ -189,10 +189,14 @@ At minimum, security tests should cover:
   prompt-injection text;
 - signed URL expiry, session rotation, role downgrade, CSRF, and rate-limit
   boundaries;
+- duplicate-email wrong-password, wrong-workspace, multi-match, and
+  cross-organization local-login behavior;
 - OIDC discovery and callback failures, issuer/audience/signature/nonce/state/PKCE validation, transaction expiry and replay, disabled or unprovisioned users, and cross-organization identity collisions;
 - service-account scope, tenant confusion, expiration, rotation, revocation, disabled-account, idempotency-key, and stale-ETag behavior;
 - webhook signatures, stable retry IDs, dead-letter replay, delivery leasing, DNS rebinding, mixed DNS, private IPv4/IPv6, redirects, timeouts, and oversized responses;
 - direct audit-event update/delete and exception self-approval restrictions;
+- evidence-bundle tenant authorization, canonical digest/signature verification, source-PDF hash comparison, encrypted-key context binding, and tamper rejection;
+- certificate-request cross-tenant access, exact link-to-submission lineage, cancellation, expiry, concurrent claims, stale-lease recovery, terminal secret deletion, and error redaction;
 - deterministic evaluation and `UNKNOWN` behavior for missing or incomparable
   values;
 - reminder retry, concurrency, renewal suppression, and provider outage; and
@@ -206,7 +210,9 @@ insurer record. Human reviewers can make mistakes, configured requirements can
 be incomplete, documents can be fraudulent, endorsements can conflict with
 certificate indications, and a policy can change after issue. Local operators
 can misconfigure infrastructure, and sophisticated parser vulnerabilities may
-exist despite isolation.
+exist despite isolation. A stolen evidence-signing private key can create
+apparently valid new bundles, and an embedded key without an independently
+trusted fingerprint proves self-consistency rather than organization identity.
 
 The appropriate response is layered controls, bounded language, preserved
 evidence, professional review where warranted, and a deployment-specific risk

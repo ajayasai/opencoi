@@ -36,6 +36,14 @@ document, configured requirements, and an evaluation date.
 - tested keyboard/form interaction contracts and accessibility documentation; and
 - a preregistered privacy-safe usability study kit with no fabricated participant results.
 
+## v0.3: verifiable collection and decisions (shipped)
+
+- tracked initial and renewal certificate requests with exact invitation-to-submission lineage, cancellation, manual sharing, and optional bounded SMTP delivery;
+- a public, versioned evidence-bundle schema with organization-specific Ed25519 signatures, source-PDF digests, and a strict offline verifier;
+- mandatory exception separation of duties: a requester cannot approve their own exception;
+- unambiguous local sign-in when the same email belongs to multiple workspaces; and
+- safer outbound-worker leasing so concurrent or stale webhook workers cannot overwrite another worker's result.
+
 ## v0.x: remaining hardening and operational maturity
 
 Priorities after the first usable release include:
@@ -50,7 +58,7 @@ Priorities after the first usable release include:
 - idempotent reminder delivery, bounce handling, and configurable escalation;
 - documented backup, restore, deletion, and upgrade procedures;
 - browser/assistive-technology accessibility testing, localization foundations, and timezone-safe dates;
-- a stable, typed rule specification and documented export schema; and
+- a stable, typed rule specification and broader machine-to-machine export coverage; and
 - concurrent-write, storage-volume, failover, and tenant-isolation test suites for larger deployments.
 
 Security requirements are not deferred merely because they appear in this
@@ -66,7 +74,7 @@ Potential directions include:
   confirmation;
 - packaged integrations built on the documented API and event model;
 - custom coverage vocabularies and safe rule-extension packages;
-- stronger audit integrity, signed exports, and reproducible decision bundles;
+- independently witnessed or transparency-log-backed signing-key publication and rotation;
 - reusable, independently designed synthetic fixture packs; and
 - insurer or broker data adapters only where licensing, consent, provenance,
   failure semantics, and security boundaries are clear.

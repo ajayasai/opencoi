@@ -2,6 +2,7 @@ import type {
   AuditRecord,
   CertificateCorrectionInput,
   CertificateRecord,
+  CertificateRequestRecord,
   DashboardData,
   ExceptionRecord,
   OidcStatus,
@@ -65,6 +66,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body.data;
 }
 
+async function download(path: string): Promise<Blob> {
+  const response = await fetch(path, { credentials: "same-origin" });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ error: "Download failed" }));
+    throw new ApiError(
+      body.error ?? body.message ?? "Download failed",
+      response.status,
+      body.details,
+    );
+  }
+  return response.blob();
+}
+
 export const api = {
   setCsrf(token: string) {
     csrfToken = token;
@@ -76,10 +90,10 @@ export const api = {
     return user;
   },
 
-  async login(email: string, password: string) {
+  async login(email: string, password: string, organizationSlug?: string) {
     const user = await request<SessionUser>("/api/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ email, password, ...(organizationSlug ? { organizationSlug } : {}) }),
     });
     csrfToken = user.csrfToken;
     return user;
@@ -118,6 +132,7 @@ export const api = {
     }),
 
   certificate: (id: string) => request<CertificateRecord>(`/api/certificates/${id}`),
+  evidenceBundle: (id: string) => download(`/api/certificates/${id}/evidence-bundle`),
   confirmCertificate: (id: string, corrections?: CertificateCorrectionInput) =>
     request<CertificateRecord>(`/api/certificates/${id}/confirmation`, {
       method: "PUT",
@@ -146,6 +161,34 @@ export const api = {
         body: JSON.stringify({ ttlDays }),
       },
     ),
+  certificateRequests: (vendorId: string) =>
+    request<{ requests: CertificateRequestRecord[]; smtpConfigured: boolean }>(
+      `/api/vendors/${vendorId}/certificate-requests`,
+    ),
+  createCertificateRequest: (
+    vendorId: string,
+    input: {
+      kind: "initial" | "renewal";
+      deliveryMethod: "manual" | "smtp";
+      recipientName?: string | null;
+      recipientEmail?: string | null;
+      sourceCertificateId?: string | null;
+      ttlDays: number;
+    },
+  ) =>
+    request<{
+      request: CertificateRequestRecord;
+      uploadUrl: string | null;
+      disclosure: string;
+    }>(`/api/vendors/${vendorId}/certificate-requests`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  cancelCertificateRequest: (requestId: string) =>
+    request<CertificateRequestRecord>(`/api/certificate-requests/${requestId}/cancel`, {
+      method: "POST",
+      body: "{}",
+    }),
   revokeUploadLink: (id: string) =>
     request<void>(`/api/upload-links/${id}/revoke`, { method: "POST", body: "{}" }),
 

@@ -1,6 +1,6 @@
 {
   "name": "opencoi",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "private": true,
   "description": "Explainable, self-hosted certificate of insurance tracking.",
   "license": "AGPL-3.0-only",
@@ -38,7 +38,9 @@
     "test:coverage": "vitest run --coverage",
     "benchmark:extract": "tsx benchmark/run-shared.ts benchmark/corpus/synthetic-text-v1.json",
     "benchmark:scale": "tsx benchmark/scale/vendor-list.ts",
+    "evidence:verify": "tsx scripts/verify-evidence-bundle.ts",
     "db:seed": "tsx server/cli/seed.ts",
+    "requests:run": "tsx server/cli/run-certificate-requests.ts",
     "reminders:run": "tsx server/cli/run-reminders.ts",
     "webhooks:run": "tsx server/cli/run-webhooks.ts"
   },

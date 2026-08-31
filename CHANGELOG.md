@@ -8,6 +8,36 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 
 - Follow the evidence-driven priorities in the [roadmap](ROADMAP.md); entries here are not delivery commitments.
 
+## [0.3.0] - 2026-08-31
+
+### Added
+
+- Added tracked initial and renewal certificate requests with one-use vendor upload links, visible lifecycle history, cancellation, manual sharing, and optional SMTP submission through a separately supervised worker.
+- Added organization-specific Ed25519-signed evidence bundles containing the source-document digest, an immutable unreviewed machine proposal when available, confirmed facts only after human confirmation, page-linked evidence, exact requirement snapshot, findings, exceptions, status limitation, and audit-chain checkpoint.
+- Published the evidence-bundle JSON Schema and a strict offline verifier that can also bind an export to the original PDF and an independently trusted signer fingerprint.
+- Added an optional workspace slug to local sign-in so one email address can be used safely in more than one organization without ambiguous tenant selection.
+
+### Changed
+
+- Outbound email now requires TLS 1.2 or newer. Certificate-request delivery records SMTP acceptance without claiming inbox delivery or opening, uses neutral message subjects, redacts recipient addresses from stored errors, and limits transient retries and secret retention; both request and reminder workers preserve ambiguous post-acceptance outcomes instead of misclassifying them as SMTP failures.
+- The webhook worker leases each delivery immediately before outbound I/O, rechecks endpoint status after DNS validation, and prevents stale workers from overwriting a newer result.
+
+### Security
+
+- Prohibited a user from approving their own exception request and exposed that separation-of-duties rule in the interface.
+- Stores manual request tokens only as digests; queued SMTP tokens are AES-256-GCM encrypted with tenant-and-request-bound context and erased after acceptance, terminal failure, cancellation, submission, or the first request-worker cycle that observes expiry.
+- Stores evidence-signing private keys encrypted with tenant-and-key-bound context; exports are authorized, tenant-scoped, and audited.
+- Bounds multi-workspace local sign-in to one memory-hard password verification at a time, and serializes schema migration version checks under SQLite's write reservation when the app and workers start together.
+
+### Evidence boundaries
+
+- A signed evidence bundle authenticates an OpenCOI document assessment; it does not prove organization identity unless the key fingerprint is obtained separately, and it never establishes live policy status.
+- Commercial comparators remain untested on the public corpus, and no real participant study or production outcome data has been published. This release does not claim universal superiority.
+
+### Upgrade note
+
+- Startup advances the foundation database from schema v3 to v4 by adding tracked certificate-request storage. Rollback to a pre-v0.3 binary requires restoring the pre-upgrade database backup.
+
 ## [0.2.2] - 2026-08-31
 
 ### Fixed
@@ -112,7 +142,10 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 - PDF triage is not antivirus or content disarm/reconstruction. Internet-facing operators should add controls appropriate to their threat model.
 - Local accounts are included; SSO, MFA, and managed identity provisioning are not.
 
-[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ajayasai/opencoi/compare/v0.2.2...v0.3.0
+[0.2.2]: https://github.com/ajayasai/opencoi/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/ajayasai/opencoi/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ajayasai/opencoi/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/ajayasai/opencoi/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ajayasai/opencoi/compare/v0.1.0...v0.1.1

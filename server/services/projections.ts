@@ -600,6 +600,8 @@ export const certificateView = (
     _opencoi?: {
       evaluationDate?: string;
       requirementVersion?: number | null;
+      evaluationVendorType?: { id?: string; name?: string };
+      evaluatedRuleset?: unknown;
       reviewDecision?: {
         status?: "REJECTED";
         reason?: string;
@@ -664,6 +666,15 @@ export const certificateView = (
     uploadedAt: row.uploaded_at,
     confirmedAt: row.confirmed_at,
     requirementVersion: extraction._opencoi?.requirementVersion ?? null,
+    evaluationVendorType:
+      typeof extraction._opencoi?.evaluationVendorType?.id === "string" &&
+      typeof extraction._opencoi.evaluationVendorType.name === "string"
+        ? {
+            id: extraction._opencoi.evaluationVendorType.id,
+            name: extraction._opencoi.evaluationVendorType.name,
+          }
+        : null,
+    evaluatedRuleset: extraction._opencoi?.evaluatedRuleset ?? null,
     evaluationDate: extraction._opencoi?.evaluationDate ?? null,
     reviewDecision: extraction._opencoi?.reviewDecision ?? null,
     evidence,

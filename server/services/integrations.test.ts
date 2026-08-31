@@ -32,6 +32,7 @@ import {
   replayWebhookDelivery,
   resolvePublicWebhookTarget,
   runWebhookDeliveryBatch,
+  setWebhookEndpointStatus,
   signWebhookPayload,
   verifyWebhookSignature,
   type WebhookHttpResult,
@@ -357,6 +358,193 @@ describe("service accounts, events, and webhooks", () => {
     ).toMatchObject({
       status: "pending",
       attempt_count: 0,
+    });
+  });
+
+  it("leases each delivery only when its network attempt is ready to start", async () => {
+    createWebhookEndpoint(database, {
+      organizationId: "org-a",
+      url: "https://hooks.example.test/opencoi",
+      eventTypes: ["*"],
+      encryptionKey,
+    });
+    const first = publishDomainEvent(database, {
+      organizationId: "org-a",
+      type: "vendor.created",
+      resourceType: "vendor",
+      resourceId: "vendor-first",
+      data: {},
+      actorType: "system",
+      at: "2030-01-01T10:00:00.000Z",
+    });
+    const second = publishDomainEvent(database, {
+      organizationId: "org-a",
+      type: "vendor.updated",
+      resourceType: "vendor",
+      resourceId: "vendor-second",
+      data: {},
+      actorType: "system",
+      at: "2030-01-01T10:00:01.000Z",
+    });
+    let announceFirstAttempt = () => {};
+    const firstAttemptStarted = new Promise<void>((resolve) => {
+      announceFirstAttempt = resolve;
+    });
+    let releaseFirstAttempt = () => {};
+    const holdFirstAttempt = new Promise<void>((resolve) => {
+      releaseFirstAttempt = resolve;
+    });
+    const firstWorkerEvents: string[] = [];
+    const firstWorker = runWebhookDeliveryBatch(database, encryptionKey, {
+      limit: 2,
+      now: new Date("2030-01-01T10:01:00.000Z"),
+      resolveTarget: async (url) => ({ url: new URL(url), address: "8.8.8.8", family: 4 }),
+      deliver: async (_target, event) => {
+        firstWorkerEvents.push(event.id);
+        announceFirstAttempt();
+        await holdFirstAttempt;
+        return { ok: true, status: 204, bodyExcerpt: "" };
+      },
+    });
+    await firstAttemptStarted;
+
+    const secondWorkerEvents: string[] = [];
+    const secondWorker = await runWebhookDeliveryBatch(database, encryptionKey, {
+      limit: 2,
+      now: new Date("2030-01-01T10:01:01.000Z"),
+      resolveTarget: async (url) => ({ url: new URL(url), address: "8.8.8.8", family: 4 }),
+      deliver: async (_target, event) => {
+        secondWorkerEvents.push(event.id);
+        return { ok: true, status: 204, bodyExcerpt: "" };
+      },
+    });
+    expect(secondWorker).toEqual({ claimed: 1, succeeded: 1, failed: 0, deadLettered: 0 });
+    expect(secondWorkerEvents).toEqual([second.id]);
+
+    releaseFirstAttempt();
+    await expect(firstWorker).resolves.toEqual({
+      claimed: 1,
+      succeeded: 1,
+      failed: 0,
+      deadLettered: 0,
+    });
+    expect(firstWorkerEvents).toEqual([first.id]);
+    expect(listWebhookDeliveries(database, "org-a")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ event_id: first.id, status: "succeeded", attempt_count: 1 }),
+        expect.objectContaining({ event_id: second.id, status: "succeeded", attempt_count: 1 }),
+      ]),
+    );
+  });
+
+  it("rechecks endpoint status after resolution and releases an unsent claim", async () => {
+    const endpoint = createWebhookEndpoint(database, {
+      organizationId: "org-a",
+      url: "https://hooks.example.test/opencoi",
+      eventTypes: ["*"],
+      encryptionKey,
+    }).endpoint;
+    publishDomainEvent(database, {
+      organizationId: "org-a",
+      type: "vendor.created",
+      resourceType: "vendor",
+      resourceId: "vendor-a",
+      data: {},
+      actorType: "system",
+      at: "2030-01-01T10:00:00.000Z",
+    });
+    const deliver = vi.fn(
+      async (): Promise<WebhookHttpResult> => ({ ok: true, status: 204, bodyExcerpt: "" }),
+    );
+    const disabled = await runWebhookDeliveryBatch(database, encryptionKey, {
+      now: new Date("2030-01-01T10:00:01.000Z"),
+      resolveTarget: async (url) => {
+        setWebhookEndpointStatus(
+          database,
+          "org-a",
+          endpoint.id,
+          "disabled",
+          "2030-01-01T10:00:01.500Z",
+        );
+        return { url: new URL(url), address: "8.8.8.8", family: 4 };
+      },
+      deliver,
+    });
+    expect(disabled).toEqual({ claimed: 0, succeeded: 0, failed: 0, deadLettered: 0 });
+    expect(deliver).not.toHaveBeenCalled();
+    expect(listWebhookDeliveries(database, "org-a")[0]).toMatchObject({
+      status: "pending",
+      attempt_count: 0,
+    });
+
+    setWebhookEndpointStatus(database, "org-a", endpoint.id, "active", "2030-01-01T10:00:02.000Z");
+    await expect(
+      runWebhookDeliveryBatch(database, encryptionKey, {
+        now: new Date("2030-01-01T10:00:03.000Z"),
+        resolveTarget: async (url) => ({ url: new URL(url), address: "8.8.8.8", family: 4 }),
+        deliver,
+      }),
+    ).resolves.toEqual({ claimed: 1, succeeded: 1, failed: 0, deadLettered: 0 });
+    expect(deliver).toHaveBeenCalledOnce();
+  });
+
+  it("timestamps claims, completion, and retry from the attempt clock", async () => {
+    createWebhookEndpoint(database, {
+      organizationId: "org-a",
+      url: "https://hooks.example.test/opencoi",
+      eventTypes: ["*"],
+      encryptionKey,
+    });
+    publishDomainEvent(database, {
+      organizationId: "org-a",
+      type: "vendor.created",
+      resourceType: "vendor",
+      resourceId: "vendor-a",
+      data: {},
+      actorType: "system",
+      at: "2030-01-01T10:00:00.000Z",
+    });
+    const times = [
+      new Date("2030-01-01T10:00:01.000Z"),
+      new Date("2030-01-01T10:00:02.000Z"),
+      new Date("2030-01-01T10:00:04.000Z"),
+    ];
+    const clock = vi.fn(() => {
+      const value = times.shift();
+      if (!value) throw new Error("Attempt clock was called unexpectedly");
+      return value;
+    });
+    const result = await runWebhookDeliveryBatch(database, encryptionKey, {
+      clock,
+      resolveTarget: async (url) => ({ url: new URL(url), address: "8.8.8.8", family: 4 }),
+      deliver: async (_target, _event, _secret, options) => {
+        expect(options?.now?.toISOString()).toBe("2030-01-01T10:00:02.000Z");
+        expect(
+          database
+            .prepare(
+              `SELECT status, claimed_at FROM webhook_deliveries
+               WHERE organization_id = ?`,
+            )
+            .get("org-a"),
+        ).toEqual({ status: "processing", claimed_at: "2030-01-01T10:00:02.000Z" });
+        return { ok: false, status: 503, bodyExcerpt: "", error: "HTTP 503" };
+      },
+    });
+    expect(result).toEqual({ claimed: 1, succeeded: 0, failed: 1, deadLettered: 0 });
+    expect(clock).toHaveBeenCalledTimes(3);
+    expect(
+      database
+        .prepare(
+          `SELECT status, attempt_count, next_attempt_at, claimed_at, updated_at
+           FROM webhook_deliveries WHERE organization_id = ?`,
+        )
+        .get("org-a"),
+    ).toEqual({
+      status: "failed",
+      attempt_count: 1,
+      next_attempt_at: "2030-01-01T10:01:04.000Z",
+      claimed_at: null,
+      updated_at: "2030-01-01T10:00:04.000Z",
     });
   });
 

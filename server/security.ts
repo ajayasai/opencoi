@@ -182,6 +182,24 @@ export const verifyPasswordOrDummy = (
   verifier: (candidate: string, hash: string) => Promise<boolean> = verifyPassword,
 ): Promise<boolean> => verifier(password, encodedHash ?? DUMMY_PASSWORD_HASH);
 
+/**
+ * Verify every candidate without running memory-hard scrypt jobs concurrently.
+ * A login may legitimately have the same email in many organizations, so the
+ * caller must still check every hash before deciding whether a workspace slug
+ * is required. Serial verification keeps one request's memory use bounded.
+ */
+export const verifyPasswordHashesSequentially = async (
+  password: string,
+  encodedHashes: readonly string[],
+  verifier: (candidate: string, hash: string) => Promise<boolean> = verifyPassword,
+): Promise<boolean[]> => {
+  const matches: boolean[] = [];
+  for (const encodedHash of encodedHashes) {
+    matches.push(await verifier(password, encodedHash));
+  }
+  return matches;
+};
+
 export const passwordHashNeedsUpgrade = (encodedHash: string): boolean => {
   const parsed = parsePasswordHash(encodedHash);
   return (

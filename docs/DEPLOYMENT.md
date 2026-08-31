@@ -38,7 +38,7 @@ REMINDERS_ENABLED=true
 REMINDER_POLL_MINUTES=360
 ```
 
-Generate `TOKEN_PEPPER` with a cryptographically secure generator, for example `openssl rand -base64 32`. Keep it stable in a password manager or secret store; changing it invalidates token-derived credentials. Use a separate, randomly generated administrator password. On Linux, restrict the environment file with `chmod 600 .env`.
+Generate `TOKEN_PEPPER` with a cryptographically secure generator, for example `openssl rand -base64 32`. Keep it stable in a password manager or secret store; changing it invalidates token-derived credentials and makes encrypted webhook, queued-request, and evidence-signing private material unreadable. Use a separate, randomly generated administrator password. On Linux, restrict the environment file with `chmod 600 .env`.
 
 The bootstrap values are read only when the user table is empty. After the initial administrator can sign in, remove the five `BOOTSTRAP_*` values from `.env` and recreate the container with `docker compose up -d`. Keep the administrator credential in a password manager, not in the deployment directory.
 
@@ -74,7 +74,7 @@ After enabling SSO, verify the public login page shows the configured button, co
 
 ### Optional SMTP delivery
 
-Without SMTP, OpenCOI can record reminder work but cannot deliver email. Add the following values when mail delivery is required:
+Without SMTP, OpenCOI can record reminder work and create manually shared certificate requests, but it cannot deliver either type of email. Add the following values when mail delivery is required:
 
 ```dotenv
 SMTP_HOST=smtp.example.com
@@ -85,11 +85,26 @@ SMTP_PASSWORD=replace-with-an-app-password
 SMTP_FROM=OpenCOI <no-reply@example.com>
 ```
 
-Use `SMTP_SECURE=true` for implicit TLS, commonly on port 465. Prefer a scoped mail credential that can send only from the configured identity.
+`SMTP_SECURE=false` requires STARTTLS and fails closed if the server does not
+offer it, normally on port 587. Use `SMTP_SECURE=true` for implicit TLS,
+commonly on port 465. Both modes require TLS 1.2 or newer. Prefer a scoped mail
+credential that can send only from the configured identity.
 
 Transient network failures, timeouts, SMTP `4xx` responses, and unclassified transport exceptions remain on one deduplicated reminder row and retry after minimum backoffs of 15 minutes and then 60 minutes. The next scheduled or manual cycle performs the eligible retry, so the actual delay can be longer than the minimum. Delivery stops after three total attempts. SMTP `5xx` responses are terminal; without a transient `4xx` response, known authentication, envelope, or message errors are also not retried. Attempt count, latest error, and next eligible time remain visible in reminder history. This is not bounce processing or suppression-list management.
 
-A delivery claim has a 30-minute lease. After a process restart or worker crash, the next cycle may atomically reclaim a stale claim while attempts remain; an abandoned third attempt becomes terminally failed. Delivery is therefore **at least once**, not exactly once: if the SMTP server accepted a message but OpenCOI crashed before recording success, stale-claim recovery can send that reminder again. The dedupe key prevents a second reminder row, but it cannot prevent this post-crash duplicate email.
+A reminder delivery claim has a 30-minute lease, while SMTP connection,
+greeting, socket, and application deadlines are at most 30 seconds. Completion
+uses the exact claim timestamp and attempt number, so a stale worker cannot
+complete a newer claim. Messages retain one stable `Message-ID` across retries.
+After a process restart or worker crash, the next cycle may atomically reclaim
+a stale claim while attempts remain; an abandoned third attempt becomes
+terminally failed. Delivery is therefore **at least once**, not exactly once:
+if the SMTP server accepted a message but OpenCOI crashed before recording
+success, stale-claim recovery can send that reminder again. The dedupe key
+prevents a second reminder row, but it cannot prevent this post-crash duplicate
+email.
+
+Certificate-request messages use a separate worker and a two-minute claim lease. A queued upload token is encrypted with `TOKEN_PEPPER`, retained only while a bounded retry remains, and erased after SMTP acceptance, cancellation, submission, terminal failure, or the first worker cycle that observes expiry. The application records provider acceptance, not inbox delivery or opening. Both email workflows can send more than once after an ambiguous crash, so invitation links remain single-use. Cancellation revokes the upload link but cannot recall a message already handed to SMTP.
 
 ## Start and verify
 
@@ -137,6 +152,10 @@ Compose creates the `opencoi-data` named volume and mounts it at `/app/data`. St
 - Restrict host and Docker-daemon access; membership in the Docker administrative group is effectively root access to the data.
 - Follow [BACKUP_RESTORE.md](BACKUP_RESTORE.md) and test restores on a separate host.
 
+## Evidence-signing key operations
+
+The first signed export for an organization creates one Ed25519 key. Its private key is encrypted in SQLite using `TOKEN_PEPPER`; its public key and SHA-256 fingerprint are included in exports. Back up the database and preserve the pepper together. Publish the fingerprint through a separately controlled channel when another party needs to authenticate the signer, rather than only verify self-contained integrity. v0.3 has no UI key-rotation workflow; document any emergency key replacement outside the application before changing deployment key material.
+
 ## Webhook worker
 
 Webhook endpoints require a stable `TOKEN_PEPPER` of at least 32 bytes. OpenCOI
@@ -161,6 +180,24 @@ remain a single-host data plane.
 Without Compose, use `npm run webhooks:run -- --watch` under a process
 supervisor. Alert on worker exits and on visible dead-letter rows. Receivers
 must deduplicate the stable `webhook-id`; delivery is at least once.
+
+## Certificate-request worker
+
+Manual certificate requests do not require a worker. To send queued requests by SMTP, configure SMTP and a stable `TOKEN_PEPPER` of at least 32 bytes, then run one supervised worker against the same data volume:
+
+```sh
+docker compose --profile requests up --build -d
+docker compose ps
+docker compose logs --tail=100 request-worker
+```
+
+Without Compose, use `npm run requests:run -- --watch`. The worker polls every 30 seconds, claims at most one due request per organization per round, and submits at most 100 messages per cycle. It retries transient failure after minimum 15-minute and 60-minute backoffs and stops after three attempts. The application also limits one user to 30, one recipient to 5, and one workspace to 200 SMTP requests in a rolling 24-hour window, with at most three active SMTP requests per vendor; the endpoint has a separate hourly throttle. Reviewers may send only to the vendor's configured contact email. Do not run multiple request workers as a horizontal-scale claim; the lease prevents simultaneous ownership of a row, but the supported data plane remains one SQLite database on one host.
+
+To run both optional outbound workers with Compose, enable both profiles:
+
+```sh
+docker compose --profile webhooks --profile requests up --build -d
+```
 
 ## Upgrades
 

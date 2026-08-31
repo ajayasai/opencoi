@@ -44,6 +44,7 @@ interface ReminderRow extends Record<string, unknown> {
 
 const MAX_DELIVERY_ATTEMPTS = 3;
 const DELIVERY_CLAIM_LEASE_MS = 30 * 60_000;
+const SMTP_SUBMISSION_DEADLINE_MS = 30_000;
 const RETRY_BACKOFF_MS = [15 * 60_000, 60 * 60_000] as const;
 const EXHAUSTED_CLAIM_ERROR =
   "Delivery claim expired after the final attempt; the delivery outcome could not be confirmed";
@@ -59,6 +60,30 @@ const TRANSIENT_TRANSPORT_CODES = new Set([
   "ETIMEDOUT",
 ]);
 const PERMANENT_TRANSPORT_CODES = new Set(["EAUTH", "EENVELOPE", "EMESSAGE"]);
+
+class SmtpSubmissionDeadlineError extends Error {
+  constructor() {
+    super("SMTP submission outcome was not available before the delivery deadline");
+    this.name = "SmtpSubmissionDeadlineError";
+  }
+}
+
+const withSmtpDeadline = async <T>(work: Promise<T>): Promise<T> => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(
+          () => reject(new SmtpSubmissionDeadlineError()),
+          SMTP_SUBMISSION_DEADLINE_MS,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+};
 
 const transientDeliveryFailure = (error: unknown): boolean => {
   if (!error || typeof error !== "object") return true;
@@ -182,12 +207,27 @@ const reminderMessage = (row: ReminderRow): { subject: string; text: string } =>
   };
 };
 
+const messageIdDomain = (appOrigin: string): string => {
+  try {
+    return new URL(appOrigin).hostname.replace(/[^a-z0-9.-]/gi, "") || "opencoi.local";
+  } catch {
+    return "opencoi.local";
+  }
+};
+
 export const runReminderCycle = async (
   database: OpenCoiDatabase,
   config: AppConfig,
-  options: { organizationId?: string; now?: Date } = {},
+  options: {
+    organizationId?: string;
+    now?: Date | (() => Date);
+    beforeSentPersistence?: (reminder: ReminderRow) => void;
+  } = {},
 ): Promise<ReminderRunResult> => {
-  const now = options.now ?? new Date();
+  const currentTime = (): Date => {
+    const value = typeof options.now === "function" ? options.now() : (options.now ?? new Date());
+    return new Date(value);
+  };
   const organizationIds = options.organizationId
     ? [options.organizationId]
     : (
@@ -205,77 +245,114 @@ export const runReminderCycle = async (
         host: config.smtp.host,
         port: config.smtp.port,
         secure: config.smtp.secure,
+        requireTLS: !config.smtp.secure,
+        tls: { minVersion: "TLSv1.2" },
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 25_000,
         ...(config.smtp.user && config.smtp.password
           ? { auth: { user: config.smtp.user, pass: config.smtp.password } }
           : {}),
       })
     : null;
 
-  for (const organizationId of organizationIds) {
-    result.created += createScheduledReminders(database, organizationId, config, now);
-    const repository = createOrganizationRepository(database, organizationId);
-    const staleBefore = new Date(now.getTime() - DELIVERY_CLAIM_LEASE_MS).toISOString();
-    result.failed += repository.failExhaustedStaleReminderClaims({
-      staleBefore,
-      maxAttempts: MAX_DELIVERY_ATTEMPTS,
-      errorMessage: EXHAUSTED_CLAIM_ERROR,
-      at: now.toISOString(),
-    });
-    const due = repository.listDueReminders(
-      now.toISOString(),
-      200,
-      MAX_DELIVERY_ATTEMPTS,
-      staleBefore,
-    ) as ReminderRow[];
-    for (const reminder of due) {
-      if (
-        !repository.markReminder({
+  try {
+    for (const organizationId of organizationIds) {
+      result.created += createScheduledReminders(database, organizationId, config, currentTime());
+      const repository = createOrganizationRepository(database, organizationId);
+      const scanAt = currentTime();
+      const staleBefore = new Date(scanAt.getTime() - DELIVERY_CLAIM_LEASE_MS).toISOString();
+      result.failed += repository.failExhaustedStaleReminderClaims({
+        staleBefore,
+        maxAttempts: MAX_DELIVERY_ATTEMPTS,
+        errorMessage: EXHAUSTED_CLAIM_ERROR,
+        at: scanAt.toISOString(),
+      });
+      const due = repository.listDueReminders(
+        scanAt.toISOString(),
+        200,
+        MAX_DELIVERY_ATTEMPTS,
+        staleBefore,
+      ) as ReminderRow[];
+      for (const reminder of due) {
+        const claimedAt = currentTime();
+        const claimStaleBefore = new Date(
+          claimedAt.getTime() - DELIVERY_CLAIM_LEASE_MS,
+        ).toISOString();
+        const claim = repository.claimReminder({
           id: reminder.id,
-          status: "processing",
-          at: now.toISOString(),
-          staleBefore,
+          at: claimedAt.toISOString(),
+          staleBefore: claimStaleBefore,
           maxAttempts: MAX_DELIVERY_ATTEMPTS,
-        })
-      ) {
-        result.skipped += 1;
-        continue;
-      }
-      const attemptNumber = reminder.attempt_count + 1;
-      try {
-        if (reminder.channel === "email") {
-          if (!transport || !config.smtp || !reminder.recipient) {
-            throw new Error("SMTP is not configured for this email reminder");
-          }
-          const message = reminderMessage(reminder);
-          await transport.sendMail({
-            from: config.smtp.from,
-            to: reminder.recipient,
-            subject: message.subject,
-            text: message.text,
-          });
-        }
-        repository.markReminder({ id: reminder.id, status: "sent", at: now.toISOString() });
-        result.sent += 1;
-      } catch (error) {
-        const retryAt =
-          reminder.channel === "email" &&
-          attemptNumber < MAX_DELIVERY_ATTEMPTS &&
-          transientDeliveryFailure(error)
-            ? retryAtAfter(attemptNumber, now)
-            : null;
-        repository.markReminder({
-          id: reminder.id,
-          status: "failed",
-          at: now.toISOString(),
-          ...(retryAt ? { retryAt } : {}),
-          errorMessage:
-            error instanceof Error ? error.message.slice(0, 500) : "Reminder delivery failed",
         });
-        result.failed += 1;
+        if (!claim) {
+          result.skipped += 1;
+          continue;
+        }
+        const attemptNumber = claim.attemptNumber;
+        let deliveryFailure: { error: unknown } | null = null;
+        if (reminder.channel === "email") {
+          try {
+            if (!transport || !config.smtp || !reminder.recipient) {
+              throw new Error("SMTP is not configured for this email reminder");
+            }
+            const message = reminderMessage(reminder);
+            await withSmtpDeadline(
+              transport.sendMail({
+                from: config.smtp.from,
+                to: reminder.recipient,
+                subject: message.subject,
+                text: message.text,
+                messageId: `<opencoi-reminder-${reminder.id}@${messageIdDomain(config.appOrigin)}>`,
+              }),
+            );
+          } catch (error) {
+            deliveryFailure = { error };
+          }
+        }
+        if (deliveryFailure) {
+          if (deliveryFailure.error instanceof SmtpSubmissionDeadlineError) {
+            throw deliveryFailure.error;
+          }
+          const completedAt = currentTime();
+          const retryAt =
+            reminder.channel === "email" &&
+            attemptNumber < MAX_DELIVERY_ATTEMPTS &&
+            transientDeliveryFailure(deliveryFailure.error)
+              ? retryAtAfter(attemptNumber, completedAt)
+              : null;
+          const recorded = repository.markReminder({
+            id: reminder.id,
+            status: "failed",
+            claimedAt: claim.claimedAt,
+            attemptNumber,
+            at: completedAt.toISOString(),
+            ...(retryAt ? { retryAt } : {}),
+            errorMessage:
+              deliveryFailure.error instanceof Error
+                ? deliveryFailure.error.message.slice(0, 500)
+                : "Reminder delivery failed",
+          });
+          if (!recorded) throw new Error("Reminder delivery failure could not be persisted");
+          result.failed += 1;
+          continue;
+        }
+        if (reminder.channel === "email") options.beforeSentPersistence?.(reminder);
+        const completedAt = currentTime();
+        const recorded = repository.markReminder({
+          id: reminder.id,
+          status: "sent",
+          claimedAt: claim.claimedAt,
+          attemptNumber,
+          at: completedAt.toISOString(),
+        });
+        if (!recorded) throw new Error("Reminder SMTP acceptance could not be persisted");
+        result.sent += 1;
       }
     }
+  } finally {
+    transport?.close();
   }
-  transport?.close();
   return result;
 };
 

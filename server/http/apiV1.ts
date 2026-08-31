@@ -4,6 +4,7 @@ import { ZodError, z } from "zod";
 import { appendAuditEvent } from "../audit.js";
 import type { AppConfig } from "../config.js";
 import { createOrganizationRepository, type OpenCoiDatabase, type VendorRow } from "../db.js";
+import { cancelOpenCertificateRequestsForVendor } from "../services/certificateRequests.js";
 import { listDomainEvents, publishDomainEvent } from "../services/domainEvents.js";
 import {
   type AuthenticatedServiceAccount,
@@ -1013,6 +1014,42 @@ export const createApiV1Router = (dependencies: ApiV1Dependencies): Router => {
         );
       if (Number(update.changes) !== 1) {
         throw new ApiProblem(412, "The vendor changed after it was read", "Precondition Failed");
+      }
+      if ((input.status ?? current.status) !== "active") {
+        const cancelledRequests = cancelOpenCertificateRequestsForVendor(dependencies.database, {
+          organizationId,
+          vendorId: current.id,
+          at,
+        });
+        for (const cancelled of cancelledRequests) {
+          publishDomainEvent(dependencies.database, {
+            organizationId,
+            type: "certificate_request.cancelled",
+            resourceType: "certificate_request",
+            resourceId: cancelled.id,
+            data: {
+              vendorId: current.id,
+              kind: cancelled.kind,
+              reason: "vendor_inactive",
+            },
+            actorType: "service_account",
+            actorId: context.serviceAccount.id,
+            at,
+          });
+          appendAuditEvent(dependencies.database, organizationId, {
+            actorType: "system",
+            action: "certificate_request.cancelled_via_api",
+            entityType: "certificate_request",
+            entityId: cancelled.id,
+            occurredAt: at,
+            metadata: {
+              serviceAccountId: context.serviceAccount.id,
+              vendorId: current.id,
+              kind: cancelled.kind,
+              reason: "vendor_inactive",
+            },
+          });
+        }
       }
       publishDomainEvent(dependencies.database, {
         organizationId,

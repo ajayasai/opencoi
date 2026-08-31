@@ -163,6 +163,7 @@ export function CertificateDetailPage() {
   const [rejectionReason, setRejectionReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [rejectionError, setRejectionError] = useState("");
+  const [exportingEvidence, setExportingEvidence] = useState(false);
 
   useEffect(() => {
     api
@@ -251,15 +252,51 @@ export function CertificateDetailPage() {
     }
   };
 
+  const exportEvidenceBundle = async () => {
+    setExportingEvidence(true);
+    try {
+      const blob = await api.evidenceBundle(certificate.id);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = `opencoi-evidence-${certificate.id}.json`;
+      document.body.append(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      toast("Signed evidence bundle downloaded", {
+        message: "Verify it offline with the open-source OpenCOI verifier.",
+      });
+    } catch (cause) {
+      toast("Evidence bundle unavailable", {
+        tone: "error",
+        message: cause instanceof Error ? cause.message : "Try again.",
+      });
+    } finally {
+      setExportingEvidence(false);
+    }
+  };
+
   return (
     <AppShell
       actions={
-        <a
-          className="button button--secondary button--sm"
-          href={`/api/certificates/${certificate.id}/download`}
-        >
-          <Download size={15} /> Download original
-        </a>
+        <>
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={exportingEvidence}
+            onClick={exportEvidenceBundle}
+            title="Download an Ed25519-signed, independently verifiable decision record"
+          >
+            <Fingerprint size={15} /> Evidence bundle
+          </Button>
+          <a
+            className="button button--secondary button--sm"
+            href={`/api/certificates/${certificate.id}/download`}
+          >
+            <Download size={15} /> Download original
+          </a>
+        </>
       }
     >
       <div className="certificate-heading">

@@ -18,8 +18,10 @@ Commercial COI products already cover collection, OCR, reminders, and dashboards
 - **Human authority:** OCR proposes; a reviewer confirms. Missing or unconfirmed evidence is never allowed to produce a pass.
 - **Page-linked provenance:** extracted parties, policies, limits, and endorsement mentions retain their normalized extracted line, submitted page, and confidence; the original proposal remains distinct from any human-corrected fact. The server checks citation consistency with client-submitted page text, while reviewer attestation establishes the link to the original PDF.
 - **Honest exceptions:** an approval is scoped and time-bound, while the underlying failed finding stays visible.
+- **Auditable separation of duties:** the person who requests an exception cannot approve that same request.
 - **Local document processing:** PDF text extraction and OCR execute in the browser with PDF.js and Tesseract.js. Worker, WebAssembly, and English language assets are served by OpenCOI itself; no runtime OCR CDN or third-party OCR API receives document pages.
-- **Portable operations:** filtered compliance CSV, original-document download, and a reviewable audit trail keep data usable outside the application.
+- **Tracked collection:** initial and renewal requests connect one exact invitation to its eventual submission, with visible delivery state, expiry, cancellation, and bounded SMTP retries.
+- **Cryptographically portable decisions:** a versioned Ed25519-signed evidence bundle carries the source PDF digest, proposals, confirmed facts, rules, citations, findings, exceptions, status boundary, and audit checkpoint for offline verification.
 - **Standards-based sign-in without lock-in:** optional OpenID Connect uses Authorization Code, PKCE, state, and nonce while retaining a local break-glass account.
 - **Open integration surface:** tenant-bound least-privilege service accounts, a versioned OpenAPI 3.1 contract, idempotent writes, optimistic concurrency, an ordered event feed, and Standard Webhooks-compatible signed delivery are included.
 - **Public evidence and evaluation tooling:** original CC0 synthetic fixtures, vendor-neutral schemas, deterministic synthetic fact/citation scoring, published failure cases, a hardware-labelled scale workload, and a preregistered usability protocol make gaps visible rather than marketing around them.
@@ -27,7 +29,7 @@ Commercial COI products already cover collection, OCR, reminders, and dashboards
 
 Open source does not automatically make software safer or more accurate. See the project's [competitive positioning](docs/COMPETITIVE_POSITIONING.md) for the claims OpenCOI will—and will not—make.
 
-## Shipped v0.2 scope
+## Shipped v0.3 scope
 
 | Intended capability | Status | What is included |
 | --- | --- | --- |
@@ -37,19 +39,21 @@ Open source does not automatically make software safer or more accurate. See the
 | OCR-assisted extraction | Included | Browser-side PDF text-layer extraction with English Tesseract OCR fallback for scanned pages; insurer, policy number, dates, common limits, and common endorsement indications are proposed. |
 | Human confirmation | Included | Side-by-side PDF and field review for staff intake; vendor submissions remain unconfirmed until an authenticated reviewer attests to and re-evaluates the extracted facts. |
 | Deficiency warnings | Included | Explainable findings for missing coverage or policy fields, inadequate or absent limits, policy-period problems, and missing or insufficient endorsement evidence. |
-| Renewal reminders | Included | A due-soon queue based on dates printed on confirmed documents, plus a deduplicated reminder worker and optional SMTP delivery. Transient email failures retry on the same row after minimum 15-minute and 60-minute backoffs, stopping after three total attempts; stale delivery claims are recovered after 30 minutes. |
-| Vendor self-service upload | Included | Expiring, revocable bearer links with no vendor account required; submissions enter human review. |
-| Exception approval | Included | Finding-scoped request and decision workflow with rationale, expiration, and an audit trail; approval does not rewrite the base finding. |
+| Renewal reminders | Included | A due-soon queue based on dates printed on confirmed documents, plus a deduplicated reminder worker and optional TLS-only SMTP delivery. Transient email failures retry on the same row after minimum 15-minute and 60-minute backoffs, stopping after three total attempts; exact-attempt compare-and-set prevents a stale worker from completing a newer 30-minute claim. |
+| Vendor self-service upload | Included | Expiring, revocable bearer links with no vendor account required; submissions enter human review. Tracked initial and renewal requests preserve which exact invitation produced a submission. |
+| Certificate requests | Included | Manual one-time sharing or optional queued SMTP, recipient and lifecycle history, cancellation, expiry, bounded retries, encrypted queued tokens, and exact upload-to-request lineage. SMTP acceptance is not represented as inbox delivery. |
+| Exception approval | Included | Finding-scoped request and decision workflow with rationale, expiration, and an audit trail; approval does not rewrite the base finding, and a requester cannot self-approve. |
 | Compliance-status export | Included | Server-generated, filter-aware CSV with formula-injection protection and document-scoped status language. |
 | Page-level extraction evidence | Included | Browser extraction proposals preserve a normalized source line, submitted page, and confidence. The server rejects citations that do not match the submitted page text; an authorized reviewer still verifies the original PDF. Corrections become manual evidence without rewriting the proposal. |
-| Standards-based authentication | Included | One explicitly tenant-bound OpenID Connect provider with Authorization Code, PKCE, state, nonce, verified identity binding, and local break-glass login. |
+| Standards-based authentication | Included | One explicitly tenant-bound OpenID Connect provider with Authorization Code, PKCE, state, nonce, verified identity binding, and local break-glass login. Local users with the same email in multiple organizations select an explicit workspace slug. |
 | API and integrations | Included | Scoped service accounts, `/api/v1`, OpenAPI 3.1, cursor pagination, idempotency, ETags, an ordered event feed, signed durable webhooks, retries, dead letters, replay, and SSRF-safe delivery. |
+| Signed evidence export | Included | Organization-specific Ed25519-signed JSON with a published schema and offline verifier; optional PDF-hash and separately trusted key-fingerprint checks prevent the embedded key from being mistaken for organization identity. |
 | Public evaluation tools | Included | Vendor-neutral extraction schemas, six original synthetic page-text cases, deterministic scores/citations, CI regression, a 10k-vendor workload, and a privacy-safe usability study kit. |
 | Live insurer connectivity | Deliberately excluded | No carrier, broker, or agency-management-system connection and no representation of live policy status. See the [roadmap](ROADMAP.md). |
 
 The release also includes a dashboard, review queue, separate document lifecycle state, original-file SHA-256 display, role-checked operations, and an append-only SHA-256-linked audit history.
 
-Limit comparison in v0.2 is USD-only. Non-USD document normalization and explicit currency-mismatch findings are roadmap work; the configuration API rejects other currencies rather than making an unsafe numeric comparison.
+Limit comparison in v0.3 is USD-only. Non-USD document normalization and explicit currency-mismatch findings are roadmap work; the configuration API rejects other currencies rather than making an unsafe numeric comparison.
 
 ## Status language
 
@@ -122,8 +126,9 @@ For upgrades, reverse proxy guidance, and SMTP configuration, follow [docs/DEPLO
 
 - Put the application behind HTTPS; set the exact public origin (`OPENCOI_APP_ORIGIN` in Compose or `APP_ORIGIN` for direct Node.js), set `TRUST_PROXY_HOPS` to the exact controlled proxy count, and keep secure cookies enabled. Leave the hop count at `0` for direct access.
 - Keep edge abuse controls enabled. OpenCOI enforces a 300-request-per-minute global ceiling per resolved client address and stricter sign-in and public-upload limits, but its in-process counters are not a substitute for proxy or gateway protection.
-- Generate and preserve a 32+ byte `TOKEN_PEPPER`; store bootstrap and SMTP credentials in a secrets manager.
+- Generate and preserve a 32+ byte `TOKEN_PEPPER`; losing or changing it breaks encrypted webhook, queued-request, and evidence-signing material. Store it with bootstrap and SMTP credentials in a secrets manager.
 - If webhooks are enabled, preserve the same `TOKEN_PEPPER` for the life of their signing secrets and run the external worker (`npm run webhooks:run -- --watch` or the Compose `webhooks` profile).
+- If SMTP certificate requests are enabled, preserve the same `TOKEN_PEPPER` while a request is queued and run the request worker (`npm run requests:run -- --watch` or the Compose `requests` profile). Manual sharing does not need this worker.
 - If OIDC is enabled, store its client secret in the same secrets manager, register the exact `/api/auth/oidc/callback` URI, and test both SSO and the local break-glass login before removing bootstrap values.
 - Sign in once, then remove the five `BOOTSTRAP_*` values and recreate the container.
 - Keep `/app/data` on encrypted, access-controlled persistent storage and back up the database and uploads together.
@@ -144,6 +149,8 @@ Third-party integrations use the stable `/api/v1` surface with tenant-bound scop
 
 Compliance CSV is available from the vendor directory and honors its search and status filters. Exported statuses remain document-scoped, and untrusted cells are neutralized before spreadsheet use.
 
+Each certificate record can also be exported as a signed evidence bundle. The bundle keeps an unreviewed proposal distinct from later confirmed facts and leaves either field null when that provenance does not exist. Verify its digest and Ed25519 signature offline, optionally compare the embedded PDF hash with the original file, and compare the signing-key fingerprint through a separately trusted channel when signer identity matters. See [signed evidence bundles](docs/EVIDENCE_BUNDLES.md).
+
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component and trust boundaries.
 
 ## Documentation
@@ -152,6 +159,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component and trust boundar
 - [Rule and status semantics](docs/RULES.md)
 - [OCR and human review](docs/OCR_AND_REVIEW.md)
 - [API and webhooks](docs/API.md)
+- [Signed evidence bundles](docs/EVIDENCE_BUNDLES.md) and [JSON Schema](docs/schemas/evidence-bundle-v1.schema.json)
 - [Public extraction benchmark](benchmark/README.md) and [head-to-head status](benchmark/HEAD_TO_HEAD_STATUS.md)
 - [Accessibility](docs/ACCESSIBILITY.md) and [usability evidence kit](research/usability/README.md)
 - [Deployment](docs/DEPLOYMENT.md)

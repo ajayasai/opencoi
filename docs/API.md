@@ -1,6 +1,6 @@
 # OpenCOI API v1 and webhooks
 
-OpenCOI v0.2 exposes a versioned machine-to-machine API at `/api/v1`. It is
+OpenCOI v0.3 exposes a versioned machine-to-machine API at `/api/v1`. It is
 separate from the browser's cookie-authenticated `/api` routes. The served
 OpenAPI 3.1 description is available without authentication at
 `/api/v1/openapi.json`; the source description is in
@@ -68,13 +68,18 @@ curl --fail-with-body \
 ## Domain events and webhooks
 
 Business events are appended in an organization-scoped sequence and fanned out
-through a transactional outbox. Current v0.2 workflows emit:
+through a transactional outbox. Current v0.3 workflows emit:
 
 - `vendor.created`
 - `vendor.updated`
 - `certificate.submitted`
 - `certificate.confirmed`
 - `certificate.rejected`
+- `certificate_request.created`
+- `certificate_request.cancelled`
+- `certificate_request.submitted`
+- `certificate_request.email_accepted`
+- `certificate_request.email_failed`
 - `exception.requested`
 - `exception.approved`
 - `exception.rejected`
@@ -82,6 +87,11 @@ through a transactional outbox. Current v0.2 workflows emit:
 
 The model accepts additional exact event types as workflows adopt it. An
 endpoint can subscribe to exact types or `*`.
+
+Certificate-request management and evidence-bundle export remain
+cookie-authenticated `/api` browser surfaces in v0.3, not stable `/api/v1`
+operations. Their domain events are available through the ordered event feed
+and matching webhook subscriptions.
 
 Delivery follows the [Standard Webhooks](https://www.standardwebhooks.com/)
 signature convention over the exact UTF-8 JSON body:
@@ -106,6 +116,10 @@ receiver must deduplicate it. OpenCOI:
   answers, redirects, oversized responses, and slow responses;
 - pins the checked IP for that attempt to resist DNS rebinding;
 - uses bounded exponential retry intervals and an atomic delivery lease;
+- claims each row immediately before outbound I/O, rechecks endpoint status
+  after DNS validation, and lets only the current claim token complete it;
+- records the actual attempt and completion timestamps rather than a scan-cycle
+  timestamp;
 - moves the eighth failed attempt to a visible dead letter; and
 - requires an administrator to replay a failed/dead-letter delivery.
 

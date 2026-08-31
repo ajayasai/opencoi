@@ -212,6 +212,27 @@ describe("reminder service", () => {
     expect(listReminders(database, "org-a")).toHaveLength(1);
   });
 
+  it("timestamps each claim and completion from the live cycle clock", async () => {
+    addVendor("clock-a", "2026-06-25");
+    addVendor("clock-b", "2026-06-25");
+    let tick = 0;
+    const clock = () => new Date(NOW.getTime() + tick++ * 1_000);
+
+    await expect(
+      runReminderCycle(database, baseConfig, { organizationId: "org-a", now: clock }),
+    ).resolves.toMatchObject({ created: 2, sent: 2, failed: 0 });
+
+    const reminders = listReminders(database, "org-a");
+    expect(reminders.map((row) => row.lastAttemptAt).sort()).toEqual([
+      new Date(NOW.getTime() + 2_000).toISOString(),
+      new Date(NOW.getTime() + 4_000).toISOString(),
+    ]);
+    expect(reminders.map((row) => row.sentAt).sort()).toEqual([
+      new Date(NOW.getTime() + 3_000).toISOString(),
+      new Date(NOW.getTime() + 5_000).toISOString(),
+    ]);
+  });
+
   it("uses an in-app reminder when SMTP is absent, including for an explicit run with polling disabled", async () => {
     addVendor("manual", "2026-06-25");
 
@@ -253,6 +274,11 @@ describe("reminder service", () => {
       host: smtp.host,
       port: smtp.port,
       secure: false,
+      requireTLS: true,
+      tls: { minVersion: "TLSv1.2" },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 25_000,
       auth: { user: smtp.user, pass: smtp.password },
     });
     expect(mail.sendMail).toHaveBeenCalledWith(
@@ -261,6 +287,7 @@ describe("reminder service", () => {
         to: "email@example.test",
         subject: "Insurance certificate renewal — Vendor email",
         text: expect.stringContaining("submitted document"),
+        messageId: expect.stringMatching(/^<opencoi-reminder-.+@localhost>$/),
       }),
     );
     expect(mail.close).toHaveBeenCalledOnce();
@@ -384,6 +411,33 @@ describe("reminder service", () => {
       error: "SMTP unavailable",
       retryEligible: true,
       nextAttemptAt: minutesAfterNow(15).toISOString(),
+    });
+  });
+
+  it("does not relabel an accepted email as failed when sent-state persistence fails", async () => {
+    addVendor("accepted-persistence", "2026-06-25");
+
+    await expect(
+      runReminderCycle(database, smtpConfig(), {
+        organizationId: "org-a",
+        now: NOW,
+        beforeSentPersistence: () => {
+          throw new Error("simulated reminder persistence failure");
+        },
+      }),
+    ).rejects.toThrow("simulated reminder persistence failure");
+
+    expect(mail.sendMail).toHaveBeenCalledOnce();
+    expect(mail.close).toHaveBeenCalledOnce();
+    expect(listReminders(database, "org-a")[0]).toMatchObject({
+      vendorId: "accepted-persistence",
+      status: "processing",
+      attemptCount: 1,
+      lastAttemptAt: NOW.toISOString(),
+      sentAt: null,
+      error: null,
+      retryEligible: false,
+      nextAttemptAt: null,
     });
   });
 
@@ -579,6 +633,107 @@ describe("reminder service", () => {
       attemptCount: 2,
       lastAttemptAt: reclaimAt,
     });
+  });
+
+  it("prevents a stale owner from completing a newer reminder claim", () => {
+    const reminderId = createClaimedEmailReminder("stale-owner");
+    const reclaimedAt = minutesAfterNow(30).toISOString();
+    expect(
+      repository.markReminder({
+        id: reminderId,
+        status: "processing",
+        at: reclaimedAt,
+        staleBefore: NOW.toISOString(),
+        maxAttempts: 3,
+      }),
+    ).toBe(true);
+
+    expect(
+      repository.markReminder({
+        id: reminderId,
+        status: "sent",
+        claimedAt: NOW.toISOString(),
+        attemptNumber: 1,
+        at: minutesAfterNow(31).toISOString(),
+      }),
+    ).toBe(false);
+    expect(
+      repository.markReminder({
+        id: reminderId,
+        status: "sent",
+        claimedAt: reclaimedAt,
+        attemptNumber: 2,
+        at: minutesAfterNow(31).toISOString(),
+      }),
+    ).toBe(true);
+    expect(listReminders(database, "org-a")[0]).toMatchObject({
+      status: "sent",
+      attemptCount: 2,
+      lastAttemptAt: reclaimedAt,
+      sentAt: minutesAfterNow(31).toISOString(),
+    });
+  });
+
+  it("returns the actual claimed attempt after an earlier due-row snapshot becomes stale", () => {
+    const vendor = addVendor("stale-snapshot", "2026-06-25");
+    const reminderId = "reminder-stale-snapshot";
+    repository.createReminder({
+      id: reminderId,
+      vendorId: vendor.id,
+      certificateId: "certificate-stale-snapshot",
+      reminderType: "renewal",
+      channel: "email",
+      recipient: "stale-snapshot@example.test",
+      scheduledFor: NOW.toISOString(),
+      dedupeKey: "renewal:certificate-stale-snapshot:2026-06-25:v1",
+      payload: { vendorName: vendor.legal_name, expirationDate: "2026-06-25" },
+    });
+    expect(repository.listDueReminders(NOW.toISOString(), 10, 3)).toEqual([
+      expect.objectContaining({ id: reminderId, attempt_count: 0 }),
+    ]);
+
+    const earlierClaim = repository.claimReminder({ id: reminderId, at: NOW.toISOString() });
+    expect(earlierClaim).toEqual({ claimedAt: NOW.toISOString(), attemptNumber: 1 });
+    if (!earlierClaim) throw new Error("Expected the earlier reminder claim");
+    expect(
+      repository.markReminder({
+        id: reminderId,
+        status: "failed",
+        claimedAt: earlierClaim.claimedAt,
+        attemptNumber: earlierClaim.attemptNumber,
+        retryAt: minutesAfterNow(15).toISOString(),
+        at: NOW.toISOString(),
+        errorMessage: "transient failure",
+      }),
+    ).toBe(true);
+
+    const currentClaim = repository.claimReminder({
+      id: reminderId,
+      at: minutesAfterNow(15).toISOString(),
+    });
+    expect(currentClaim).toEqual({
+      claimedAt: minutesAfterNow(15).toISOString(),
+      attemptNumber: 2,
+    });
+    if (!currentClaim) throw new Error("Expected the current reminder claim");
+    expect(
+      repository.markReminder({
+        id: reminderId,
+        status: "sent",
+        claimedAt: earlierClaim.claimedAt,
+        attemptNumber: earlierClaim.attemptNumber,
+        at: minutesAfterNow(16).toISOString(),
+      }),
+    ).toBe(false);
+    expect(
+      repository.markReminder({
+        id: reminderId,
+        status: "sent",
+        claimedAt: currentClaim.claimedAt,
+        attemptNumber: currentClaim.attemptNumber,
+        at: minutesAfterNow(16).toISOString(),
+      }),
+    ).toBe(true);
   });
 
   it("terminally fails a stale claim that already consumed the third attempt", async () => {

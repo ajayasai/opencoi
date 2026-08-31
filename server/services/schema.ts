@@ -128,5 +128,23 @@ export const ensureApiSchema = (database: OpenCoiDatabase): void => {
 
     CREATE INDEX IF NOT EXISTS requirement_versions_current_idx
       ON requirement_versions (organization_id, vendor_type_id, version DESC);
+
+    CREATE TABLE IF NOT EXISTS evidence_signing_keys (
+      id TEXT PRIMARY KEY,
+      organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+      algorithm TEXT NOT NULL CHECK (algorithm = 'Ed25519'),
+      public_key_spki TEXT NOT NULL,
+      public_key_fingerprint TEXT NOT NULL CHECK (length(public_key_fingerprint) = 64),
+      private_key_ciphertext TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'retired')),
+      created_at TEXT NOT NULL,
+      retired_at TEXT,
+      UNIQUE (organization_id, id),
+      UNIQUE (organization_id, public_key_fingerprint)
+    ) STRICT;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS evidence_signing_keys_active_idx
+      ON evidence_signing_keys (organization_id)
+      WHERE status = 'active';
   `);
 };

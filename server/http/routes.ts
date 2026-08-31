@@ -13,9 +13,18 @@ import {
   createSessionTokens,
   createUploadLinkToken,
   hashUploadLinkToken,
-  verifyPassword,
+  verifyPasswordHashesSequentially,
   verifyPasswordOrDummy,
 } from "../security.js";
+import {
+  cancelCertificateRequest,
+  cancelOpenCertificateRequest,
+  cancelOpenCertificateRequestsForVendor,
+  createCertificateRequest,
+  getCertificateRequest,
+  listCertificateRequests,
+  markCertificateRequestSubmitted,
+} from "../services/certificateRequests.js";
 import {
   certificateCorrectionSchema,
   certificateRejectionReasonSchema,
@@ -25,6 +34,7 @@ import {
   rejectStoredCertificate,
 } from "../services/certificates.js";
 import { publishDomainEvent } from "../services/domainEvents.js";
+import { buildSignedEvidenceBundle, evidenceSigningKeyView } from "../services/evidenceBundles.js";
 import {
   certificateView,
   dashboardView,
@@ -72,7 +82,14 @@ const loginSchema = z.object({
     .max(320)
     .transform((value) => value.toLowerCase()),
   password: z.string().min(1).max(1_024),
-  organizationSlug: z.string().trim().min(1).max(64).optional(),
+  organizationSlug: z
+    .string()
+    .trim()
+    .min(1)
+    .max(64)
+    .regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/)
+    .transform((value) => value.toLowerCase())
+    .optional(),
 });
 
 const vendorCreateSchema = z.object({
@@ -132,6 +149,17 @@ const publishRequirementsSchema = z
       seen.add(key);
     });
   });
+
+const certificateRequestCreateSchema = z
+  .object({
+    kind: z.enum(["initial", "renewal"]),
+    deliveryMethod: z.enum(["manual", "smtp"]),
+    recipientName: nullableText(200),
+    recipientEmail: z.string().trim().email().max(320).nullable().optional(),
+    sourceCertificateId: text(128).nullable().optional(),
+    ttlDays: z.number().int().min(1).max(365).default(14),
+  })
+  .strict();
 
 const sessionUser = (user: UserRow, organizationName: string, csrfToken: string) => ({
   id: user.id,
@@ -250,6 +278,7 @@ const exceptionView = (
     reason: request.reason ?? String(row.request_reason),
     compensatingControls: request.compensatingControls ?? null,
     requestedBy: String(row.requested_by),
+    requestedByUserId: String(row.requested_by_user_id),
     requestedAt: String(row.created_at),
     expiresAt: row.expires_at ? String(row.expires_at) : "",
     status:
@@ -301,19 +330,26 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
            FROM users u JOIN organizations o ON o.id = u.organization_id
            WHERE u.email = ? COLLATE NOCASE AND u.status = 'active'
              AND (? IS NULL OR o.slug = ? COLLATE NOCASE)
-           ORDER BY u.organization_id LIMIT 10`,
+           ORDER BY u.organization_id`,
         )
         .all(
           input.email,
           input.organizationSlug ?? null,
           input.organizationSlug ?? null,
         ) as unknown as Array<UserRow & { organization_name: string }>;
-      const matches: Array<UserRow & { organization_name: string }> = [];
       if (candidates.length === 0) {
         await verifyPasswordOrDummy(input.password);
       }
-      for (const candidate of candidates) {
-        if (await verifyPassword(input.password, candidate.password_hash)) matches.push(candidate);
+      const passwordMatches = await verifyPasswordHashesSequentially(
+        input.password,
+        candidates.map((candidate) => candidate.password_hash),
+      );
+      const matches = candidates.filter((_candidate, index) => passwordMatches[index]);
+      if (!input.organizationSlug && matches.length > 1) {
+        throw new HttpError(
+          400,
+          "Workspace slug is required when these credentials match multiple organizations",
+        );
       }
       if (matches.length !== 1) throw new HttpError(401, "Email or password is incorrect");
       const user = matches[0] as UserRow & { organization_name: string };
@@ -430,19 +466,43 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
         consumeUploadLink: true,
         forceUnconfirmed: true,
         now: at,
-      });
-      appendAuditEvent(dependencies.database, context.repository.organizationId, {
-        actorType: "vendor",
-        action: "certificate.vendor_uploaded",
-        entityType: "certificate",
-        entityId: result.certificate.id,
-        metadata: {
-          vendorId: context.vendor.id,
-          documentId: result.document.id,
-          sha256: result.document.sha256,
-          reviewStatus: "UNCONFIRMED",
+        withinTransaction: (ingested, repository) => {
+          const completedRequest = markCertificateRequestSubmitted(dependencies.database, {
+            organizationId: repository.organizationId,
+            uploadLinkId: context.link.id,
+            certificateId: ingested.certificate.id,
+            at: at.toISOString(),
+          });
+          if (completedRequest) {
+            publishDomainEvent(dependencies.database, {
+              organizationId: repository.organizationId,
+              type: "certificate_request.submitted",
+              resourceType: "certificate_request",
+              resourceId: completedRequest.id,
+              data: {
+                vendorId: context.vendor.id,
+                certificateId: ingested.certificate.id,
+                kind: completedRequest.kind,
+              },
+              actorType: "system",
+              at: at.toISOString(),
+            });
+          }
+          appendAuditEvent(dependencies.database, repository.organizationId, {
+            actorType: "vendor",
+            action: "certificate.vendor_uploaded",
+            entityType: "certificate",
+            entityId: ingested.certificate.id,
+            metadata: {
+              vendorId: context.vendor.id,
+              documentId: ingested.document.id,
+              sha256: ingested.document.sha256,
+              reviewStatus: "UNCONFIRMED",
+              certificateRequestId: completedRequest?.id ?? null,
+            },
+            ...requestAuditContext(request),
+          });
         },
-        ...requestAuditContext(request),
       });
       data(
         response,
@@ -625,54 +685,100 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
       dependencies.database,
       auth.user.organization_id,
     );
-    const current = repository.getVendor(request.params.id as string);
-    if (!current) throw new HttpError(404, "Vendor not found");
-    const vendorTypeId = input.vendorTypeId ?? current.vendor_type_id;
-    if (!repository.getVendorType(vendorTypeId)) {
-      throw new HttpError(400, "Vendor type does not exist in this organization");
-    }
-    const pick = (key: keyof typeof input, fallback: string | null): string | null =>
-      Object.hasOwn(input, key) ? ((input[key] as string | null) ?? null) : fallback;
     const timestamp = now().toISOString();
-    dependencies.database
-      .prepare(
-        `UPDATE vendors SET vendor_type_id = ?, legal_name = ?, trade_name = ?, contact_name = ?,
-             contact_email = ?, contact_phone = ?, external_reference = ?, status = ?, notes = ?, updated_at = ?
-           WHERE organization_id = ? AND id = ?`,
-      )
-      .run(
-        vendorTypeId,
-        input.legalName ?? current.legal_name,
-        Object.hasOwn(input, "dbaName")
-          ? (input.dbaName ?? null)
-          : Object.hasOwn(input, "tradeName")
-            ? (input.tradeName ?? null)
-            : current.trade_name,
-        pick("contactName", current.contact_name),
-        pick("contactEmail", current.contact_email),
-        pick("contactPhone", current.contact_phone),
-        pick("externalReference", current.external_reference),
-        input.status ?? current.status,
-        pick("notes", current.notes),
-        timestamp,
-        repository.organizationId,
-        current.id,
-      );
-    audit(dependencies, request, response, {
-      action: "vendor.updated",
-      entityType: "vendor",
-      entityId: current.id,
-      metadata: { fields: Object.keys(input).sort() },
+    const updatedVendor = repository.transaction((transactionRepository) => {
+      const current = transactionRepository.getVendor(request.params.id as string);
+      if (!current) throw new HttpError(404, "Vendor not found");
+      if (
+        auth.user.role === "reviewer" &&
+        Object.hasOwn(input, "contactEmail") &&
+        (input.contactEmail ?? "").trim().toLowerCase() !==
+          (current.contact_email ?? "").trim().toLowerCase()
+      ) {
+        throw new HttpError(
+          403,
+          "Only an owner or administrator can change a vendor contact email",
+        );
+      }
+      const vendorTypeId = input.vendorTypeId ?? current.vendor_type_id;
+      if (!transactionRepository.getVendorType(vendorTypeId)) {
+        throw new HttpError(400, "Vendor type does not exist in this organization");
+      }
+      const pick = (key: keyof typeof input, fallback: string | null): string | null =>
+        Object.hasOwn(input, key) ? ((input[key] as string | null) ?? null) : fallback;
+      const nextStatus = input.status ?? current.status;
+      dependencies.database
+        .prepare(
+          `UPDATE vendors SET vendor_type_id = ?, legal_name = ?, trade_name = ?, contact_name = ?,
+               contact_email = ?, contact_phone = ?, external_reference = ?, status = ?, notes = ?, updated_at = ?
+             WHERE organization_id = ? AND id = ?`,
+        )
+        .run(
+          vendorTypeId,
+          input.legalName ?? current.legal_name,
+          Object.hasOwn(input, "dbaName")
+            ? (input.dbaName ?? null)
+            : Object.hasOwn(input, "tradeName")
+              ? (input.tradeName ?? null)
+              : current.trade_name,
+          pick("contactName", current.contact_name),
+          pick("contactEmail", current.contact_email),
+          pick("contactPhone", current.contact_phone),
+          pick("externalReference", current.external_reference),
+          nextStatus,
+          pick("notes", current.notes),
+          timestamp,
+          repository.organizationId,
+          current.id,
+        );
+      if (nextStatus !== "active") {
+        const cancelledRequests = cancelOpenCertificateRequestsForVendor(dependencies.database, {
+          organizationId: repository.organizationId,
+          vendorId: current.id,
+          at: timestamp,
+        });
+        for (const cancelled of cancelledRequests) {
+          publishDomainEvent(dependencies.database, {
+            organizationId: repository.organizationId,
+            type: "certificate_request.cancelled",
+            resourceType: "certificate_request",
+            resourceId: cancelled.id,
+            data: {
+              vendorId: current.id,
+              kind: cancelled.kind,
+              reason: "vendor_inactive",
+            },
+            actorType: "user",
+            actorId: auth.user.id,
+            at: timestamp,
+          });
+          appendAuditEvent(dependencies.database, repository.organizationId, {
+            actorType: "user",
+            actorUserId: auth.user.id,
+            action: "certificate_request.cancelled",
+            entityType: "certificate_request",
+            entityId: cancelled.id,
+            occurredAt: timestamp,
+            metadata: {
+              vendorId: current.id,
+              kind: cancelled.kind,
+              reason: "vendor_inactive",
+            },
+            ...requestAuditContext(request),
+          });
+        }
+      }
+      audit(dependencies, request, response, {
+        action: "vendor.updated",
+        entityType: "vendor",
+        entityId: current.id,
+        metadata: { fields: Object.keys(input).sort() },
+      });
+      const updated = transactionRepository.getVendor(current.id);
+      if (!updated) throw new Error("Updated vendor could not be read");
+      return updated;
     });
-    data(
-      response,
-      vendorDetailView(
-        dependencies.database,
-        repository,
-        repository.getVendor(current.id) as NonNullable<ReturnType<typeof repository.getVendor>>,
-        now(),
-      ),
-    );
+    data(response, vendorDetailView(dependencies.database, repository, updatedVendor, now()));
   });
 
   router.get("/vendor-types", (_request, response) => {
@@ -845,6 +951,64 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
     );
     if (!view) throw new HttpError(404, "Certificate not found");
     data(response, view);
+  });
+
+  router.get("/evidence-keys/current", (_request, response) => {
+    const auth = authContext(response);
+    try {
+      data(
+        response,
+        evidenceSigningKeyView(
+          dependencies.database,
+          auth.user.organization_id,
+          dependencies.config.tokenPepper,
+          now(),
+        ),
+      );
+    } catch (error) {
+      if (error instanceof RangeError && error.message.includes("TOKEN_PEPPER")) {
+        throw new HttpError(503, error.message);
+      }
+      throw error;
+    }
+  });
+
+  router.get("/certificates/:id/evidence-bundle", (request, response) => {
+    const auth = authContext(response);
+    let bundle: ReturnType<typeof buildSignedEvidenceBundle>;
+    try {
+      bundle = buildSignedEvidenceBundle({
+        database: dependencies.database,
+        organizationId: auth.user.organization_id,
+        certificateId: request.params.id as string,
+        exportedByUserId: auth.user.id,
+        appOrigin: dependencies.config.appOrigin,
+        tokenPepper: dependencies.config.tokenPepper,
+        now: now(),
+      });
+    } catch (error) {
+      if (error instanceof RangeError && error.message.includes("TOKEN_PEPPER")) {
+        throw new HttpError(503, error.message);
+      }
+      throw error;
+    }
+    if (!bundle) throw new HttpError(404, "Certificate not found");
+    audit(dependencies, request, response, {
+      action: "evidence_bundle.exported",
+      entityType: "certificate",
+      entityId: request.params.id as string,
+      metadata: {
+        digest: bundle.integrity.digest.value,
+        signingKeyFingerprint: bundle.integrity.signature.publicKeyFingerprint,
+      },
+    });
+    response.setHeader("Content-Type", "application/json; charset=utf-8");
+    response.setHeader(
+      "Content-Disposition",
+      `attachment; filename="opencoi-evidence-${request.params.id as string}.json"`,
+    );
+    response.setHeader("Cache-Control", "private, no-store");
+    response.send(`${JSON.stringify(bundle, null, 2)}\n`);
   });
 
   router.put(
@@ -1023,6 +1187,221 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
     },
   );
 
+  const certificateRequestView = <T extends { state: string; expiresAt: string }>(
+    requestRecord: T,
+    at: Date,
+  ) => ({
+    ...requestRecord,
+    state:
+      requestRecord.state === "open" && requestRecord.expiresAt <= at.toISOString()
+        ? "expired"
+        : requestRecord.state,
+  });
+
+  router.get("/vendors/:id/certificate-requests", (request, response) => {
+    const auth = authContext(response);
+    const repository = createOrganizationRepository(
+      dependencies.database,
+      auth.user.organization_id,
+    );
+    const vendor = repository.getVendor(request.params.id as string);
+    if (!vendor) throw new HttpError(404, "Vendor not found");
+    const at = now();
+    data(response, {
+      requests: listCertificateRequests(dependencies.database, repository.organizationId, {
+        vendorId: vendor.id,
+        limit: 100,
+      }).map((record) => certificateRequestView(record, at)),
+      smtpConfigured: Boolean(dependencies.config.smtp && dependencies.config.tokenPepper),
+    });
+  });
+
+  router.post(
+    "/vendors/:id/certificate-requests",
+    rateLimit({
+      windowMs: 60 * 60_000,
+      limit: 30,
+      standardHeaders: "draft-8",
+      legacyHeaders: false,
+      handler: (_request, _response, next) =>
+        next(new HttpError(429, "Too many certificate requests; try again later")),
+    }),
+    requireRole("owner", "admin", "reviewer"),
+    (request, response) => {
+      const input = certificateRequestCreateSchema.parse(request.body);
+      if (input.deliveryMethod === "smtp" && !dependencies.config.smtp) {
+        throw new HttpError(409, "SMTP delivery is not configured");
+      }
+      if (input.deliveryMethod === "smtp" && !dependencies.config.tokenPepper) {
+        throw new HttpError(409, "TOKEN_PEPPER is required for queued email delivery");
+      }
+      const auth = authContext(response);
+      const repository = createOrganizationRepository(
+        dependencies.database,
+        auth.user.organization_id,
+      );
+      const vendor = repository.getVendor(request.params.id as string);
+      if (!vendor) throw new HttpError(404, "Vendor not found");
+      const at = now();
+      const expiresAt = new Date(at.getTime() + input.ttlDays * 86_400_000).toISOString();
+      const random = createUploadLinkToken(dependencies.config.tokenPepper);
+      const uploadToken = tokenForOrganization(repository.organizationId, random.token);
+      let created: ReturnType<typeof createCertificateRequest>;
+      try {
+        created = repository.transaction(() => {
+          const transactionVendor = repository.getVendor(vendor.id);
+          if (!transactionVendor) throw new HttpError(404, "Vendor not found");
+          const selectedRecipient = (input.recipientEmail ?? transactionVendor.contact_email ?? "")
+            .trim()
+            .toLowerCase();
+          const configuredRecipient = (transactionVendor.contact_email ?? "").trim().toLowerCase();
+          if (
+            input.deliveryMethod === "smtp" &&
+            auth.user.role === "reviewer" &&
+            selectedRecipient !== configuredRecipient
+          ) {
+            throw new HttpError(
+              403,
+              "Reviewers can send certificate requests only to the vendor's configured contact email",
+            );
+          }
+          const record = createCertificateRequest(dependencies.database, {
+            organizationId: repository.organizationId,
+            vendorId: vendor.id,
+            uploadToken,
+            expiresAt,
+            kind: input.kind,
+            deliveryMethod: input.deliveryMethod,
+            tokenPepper: dependencies.config.tokenPepper,
+            recipientName: input.recipientName ?? transactionVendor.contact_name ?? undefined,
+            recipientEmail: input.recipientEmail ?? transactionVendor.contact_email ?? undefined,
+            sourceCertificateId: input.sourceCertificateId ?? undefined,
+            createdByUserId: auth.user.id,
+            at: at.toISOString(),
+          });
+          publishDomainEvent(dependencies.database, {
+            organizationId: repository.organizationId,
+            type: "certificate_request.created",
+            resourceType: "certificate_request",
+            resourceId: record.id,
+            data: {
+              vendorId: vendor.id,
+              kind: record.kind,
+              deliveryMethod: record.deliveryMethod,
+              expiresAt: record.expiresAt,
+            },
+            actorType: "user",
+            actorId: auth.user.id,
+            at: at.toISOString(),
+          });
+          appendAuditEvent(dependencies.database, repository.organizationId, {
+            actorType: "user",
+            actorUserId: auth.user.id,
+            action: "certificate_request.created",
+            entityType: "certificate_request",
+            entityId: record.id,
+            metadata: {
+              vendorId: vendor.id,
+              kind: record.kind,
+              deliveryMethod: record.deliveryMethod,
+              expiresAt: record.expiresAt,
+            },
+            ...requestAuditContext(request),
+          });
+          return record;
+        });
+      } catch (error) {
+        if (error instanceof TypeError || error instanceof RangeError) {
+          throw new HttpError(400, error.message);
+        }
+        throw error;
+      }
+      data(
+        response,
+        {
+          request: certificateRequestView(created, at),
+          uploadUrl:
+            created.deliveryMethod === "manual"
+              ? `${dependencies.config.appOrigin}/upload/${uploadToken}`
+              : null,
+          disclosure:
+            created.deliveryMethod === "smtp"
+              ? "Queued for SMTP acceptance; OpenCOI does not claim inbox delivery or opening."
+              : "The upload URL is shown once. Share it only with the intended recipient.",
+        },
+        201,
+      );
+    },
+  );
+
+  router.post(
+    "/certificate-requests/:id/cancel",
+    requireRole("owner", "admin", "reviewer"),
+    (request, response) => {
+      const auth = authContext(response);
+      const repository = createOrganizationRepository(
+        dependencies.database,
+        auth.user.organization_id,
+      );
+      const at = now();
+      const existingRequest = getCertificateRequest(
+        dependencies.database,
+        repository.organizationId,
+        request.params.id as string,
+      );
+      if (!existingRequest) throw new HttpError(404, "Certificate request not found");
+      if (existingRequest.state === "cancelled") {
+        data(response, certificateRequestView(existingRequest, at));
+        return;
+      }
+      let cancelled: ReturnType<typeof cancelCertificateRequest>;
+      try {
+        cancelled = repository.transaction(() => {
+          const record = cancelOpenCertificateRequest(dependencies.database, {
+            organizationId: repository.organizationId,
+            requestId: request.params.id as string,
+            at: at.toISOString(),
+          });
+          if (!record) {
+            const latest = getCertificateRequest(
+              dependencies.database,
+              repository.organizationId,
+              request.params.id as string,
+            );
+            if (latest?.state === "cancelled") return latest;
+            if (!latest) return null;
+            throw new RangeError(`A ${latest.state} certificate request cannot be cancelled`);
+          }
+          publishDomainEvent(dependencies.database, {
+            organizationId: repository.organizationId,
+            type: "certificate_request.cancelled",
+            resourceType: "certificate_request",
+            resourceId: record.id,
+            data: { vendorId: record.vendorId, kind: record.kind },
+            actorType: "user",
+            actorId: auth.user.id,
+            at: at.toISOString(),
+          });
+          appendAuditEvent(dependencies.database, repository.organizationId, {
+            actorType: "user",
+            actorUserId: auth.user.id,
+            action: "certificate_request.cancelled",
+            entityType: "certificate_request",
+            entityId: record.id,
+            metadata: { vendorId: record.vendorId, kind: record.kind },
+            ...requestAuditContext(request),
+          });
+          return record;
+        });
+      } catch (error) {
+        if (error instanceof RangeError) throw new HttpError(409, error.message);
+        throw error;
+      }
+      if (!cancelled) throw new HttpError(404, "Certificate request not found");
+      data(response, certificateRequestView(cancelled, at));
+    },
+  );
+
   router.post(
     "/upload-links/:id/revoke",
     requireRole("owner", "admin", "reviewer"),
@@ -1034,14 +1413,60 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
       );
       const link = repository.getUploadLink(request.params.id as string);
       if (!link) throw new HttpError(404, "Upload link not found");
-      if (!repository.revokeUploadLink(link.id, now().toISOString())) {
-        throw new HttpError(409, "Upload link is already revoked");
-      }
-      audit(dependencies, request, response, {
-        action: "upload_link.revoked",
-        entityType: "upload_link",
-        entityId: link.id,
-        metadata: { vendorId: link.vendor_id },
+      const at = now();
+      repository.transaction(() => {
+        const tracked = dependencies.database
+          .prepare(
+            `SELECT id, state FROM certificate_requests
+             WHERE organization_id = ? AND upload_link_id = ?`,
+          )
+          .get(repository.organizationId, link.id) as
+          | { id: string; state: "open" | "submitted" | "cancelled" | "expired" }
+          | undefined;
+        if (tracked?.state === "open") {
+          const cancelled = cancelCertificateRequest(dependencies.database, {
+            organizationId: repository.organizationId,
+            requestId: tracked.id,
+            at: at.toISOString(),
+          });
+          if (!cancelled) throw new HttpError(409, "Certificate request could not be cancelled");
+          publishDomainEvent(dependencies.database, {
+            organizationId: repository.organizationId,
+            type: "certificate_request.cancelled",
+            resourceType: "certificate_request",
+            resourceId: cancelled.id,
+            data: {
+              vendorId: cancelled.vendorId,
+              kind: cancelled.kind,
+              reason: "upload_link_revoked",
+            },
+            actorType: "user",
+            actorId: auth.user.id,
+            at: at.toISOString(),
+          });
+          appendAuditEvent(dependencies.database, repository.organizationId, {
+            actorType: "user",
+            actorUserId: auth.user.id,
+            action: "certificate_request.cancelled",
+            entityType: "certificate_request",
+            entityId: cancelled.id,
+            occurredAt: at.toISOString(),
+            metadata: {
+              vendorId: cancelled.vendorId,
+              kind: cancelled.kind,
+              reason: "upload_link_revoked",
+            },
+            ...requestAuditContext(request),
+          });
+        } else if (!repository.revokeUploadLink(link.id, at.toISOString())) {
+          throw new HttpError(409, "Upload link is already revoked");
+        }
+        audit(dependencies, request, response, {
+          action: "upload_link.revoked",
+          entityType: "upload_link",
+          entityId: link.id,
+          metadata: { vendorId: link.vendor_id, certificateRequestId: tracked?.id ?? null },
+        });
       });
       response.status(204).end();
     },
@@ -1158,6 +1583,9 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
       now(),
     );
     if (!existing) throw new HttpError(404, "Exception not found");
+    if (input.decision === "approved" && existing.requestedByUserId === auth.user.id) {
+      throw new HttpError(409, "A different administrator must approve this exception request");
+    }
     repository.transaction((transactionRepository) => {
       if (
         !transactionRepository.decideException({
@@ -1241,7 +1669,7 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
       const auth = authContext(response);
       const result = await runReminderCycle(dependencies.database, dependencies.config, {
         organizationId: auth.user.organization_id,
-        now: now(),
+        now,
       });
       audit(dependencies, request, response, {
         action: "reminders.run",

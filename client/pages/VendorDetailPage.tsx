@@ -37,7 +37,12 @@ import {
 } from "../components/ui";
 import { useAuth } from "../state/AuthContext";
 import { useToast } from "../state/ToastContext";
-import type { CertificateRecord, VendorDetail, VendorType } from "../types";
+import type {
+  CertificateRecord,
+  CertificateRequestRecord,
+  VendorDetail,
+  VendorType,
+} from "../types";
 import { formatDate, formatMoney, formatRelativeDate, titleCase } from "../utils";
 import { errorMessage, PageError } from "./pageHelpers";
 import "./pages.css";
@@ -74,8 +79,17 @@ export function VendorDetailPage() {
   const [vendorTypes, setVendorTypes] = useState<VendorType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [requests, setRequests] = useState<CertificateRequestRecord[]>([]);
+  const [smtpConfigured, setSmtpConfigured] = useState(false);
+  const [requestOpen, setRequestOpen] = useState(false);
+  const [requestKind, setRequestKind] = useState<"initial" | "renewal">("initial");
+  const [deliveryMethod, setDeliveryMethod] = useState<"manual" | "smtp">("manual");
+  const [requestRecipientName, setRequestRecipientName] = useState("");
+  const [requestRecipientEmail, setRequestRecipientEmail] = useState("");
+  const [requestTtlDays, setRequestTtlDays] = useState("14");
+  const [requestError, setRequestError] = useState("");
+  const [creatingRequest, setCreatingRequest] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
-  const [creatingLink, setCreatingLink] = useState(false);
   const [createdLink, setCreatedLink] = useState<{ url: string; expiresAt: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -92,9 +106,15 @@ export function VendorDetailPage() {
     setLoading(true);
     setError("");
     try {
-      const [vendorRecord, types] = await Promise.all([api.vendor(id), api.vendorTypes()]);
+      const [vendorRecord, types, requestData] = await Promise.all([
+        api.vendor(id),
+        api.vendorTypes(),
+        api.certificateRequests(id),
+      ]);
       setVendor(vendorRecord);
       setVendorTypes(types);
+      setRequests(requestData.requests);
+      setSmtpConfigured(requestData.smtpConfigured);
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -112,19 +132,49 @@ export function VendorDetailPage() {
     [vendor?.certificates],
   );
 
-  const createLink = async () => {
+  const openRequest = () => {
     if (!vendor) return;
-    setCreatingLink(true);
-    setActionError("");
+    setRequestKind(vendor.certificates.length > 0 ? "renewal" : "initial");
+    setDeliveryMethod(smtpConfigured ? "smtp" : "manual");
+    setRequestRecipientName(vendor.contactName ?? "");
+    setRequestRecipientEmail(vendor.contactEmail ?? "");
+    setRequestTtlDays("14");
+    setRequestError("");
+    setRequestOpen(true);
+  };
+
+  const createRequest = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!vendor) return;
+    if (deliveryMethod === "smtp" && !requestRecipientEmail.trim()) {
+      setRequestError("A recipient email is required for email delivery.");
+      return;
+    }
+    setCreatingRequest(true);
+    setRequestError("");
     try {
-      const result = await api.createUploadLink(vendor.id, 14);
-      setCreatedLink({ url: result.url, expiresAt: result.expiresAt });
-      setLinkOpen(true);
+      const result = await api.createCertificateRequest(vendor.id, {
+        kind: requestKind,
+        deliveryMethod,
+        recipientName: requestRecipientName.trim() || null,
+        recipientEmail: requestRecipientEmail.trim() || null,
+        sourceCertificateId: requestKind === "renewal" ? (certificates[0]?.id ?? null) : null,
+        ttlDays: Number(requestTtlDays),
+      });
+      setRequestOpen(false);
+      if (result.uploadUrl) {
+        setCreatedLink({ url: result.uploadUrl, expiresAt: result.request.expiresAt });
+        setLinkOpen(true);
+      } else {
+        toast("Certificate request queued", {
+          message: "The worker will submit the fixed request email to SMTP for acceptance.",
+        });
+      }
       await load();
     } catch (cause) {
-      setActionError(errorMessage(cause));
+      setRequestError(errorMessage(cause));
     } finally {
-      setCreatingLink(false);
+      setCreatingRequest(false);
     }
   };
 
@@ -146,6 +196,17 @@ export function VendorDetailPage() {
     try {
       await api.revokeUploadLink(linkId);
       toast("Upload link revoked");
+      await load();
+    } catch (cause) {
+      setActionError(errorMessage(cause));
+    }
+  };
+
+  const cancelRequest = async (requestId: string) => {
+    if (!window.confirm("Cancel this certificate request and revoke its upload link?")) return;
+    try {
+      await api.cancelCertificateRequest(requestId);
+      toast("Certificate request cancelled");
       await load();
     } catch (cause) {
       setActionError(errorMessage(cause));
@@ -223,9 +284,9 @@ export function VendorDetailPage() {
                 <Pencil size={16} />
                 Edit vendor
               </Button>
-              <Button variant="secondary" onClick={createLink} loading={creatingLink}>
-                <Link2 size={16} />
-                Create upload link
+              <Button variant="secondary" onClick={openRequest}>
+                <Mail size={16} />
+                Request certificate
               </Button>
               <Button onClick={() => navigate(`/vendors/${vendor.id}/certificates/new`)}>
                 <Upload size={16} />
@@ -311,6 +372,84 @@ export function VendorDetailPage() {
                     </article>
                   );
                 })}
+              </div>
+            )}
+          </Card>
+
+          <Card className="panel-card">
+            <div className="panel-card__header">
+              <div>
+                <span className="section-kicker">Collection workflow</span>
+                <h3>Certificate requests</h3>
+              </div>
+              <span className="muted-count">{requests.length} tracked</span>
+            </div>
+            {requests.length === 0 ? (
+              <EmptyState
+                icon={<Mail size={25} />}
+                title="No tracked requests"
+                description="Create a single-use request, share it manually or queue a fixed email, and see when its exact link produces a submission."
+                action={
+                  user?.role !== "viewer" ? (
+                    <Button onClick={openRequest}>
+                      <Mail size={16} /> Request certificate
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <div className="request-list">
+                {requests.map((requestRecord) => (
+                  <article className="request-row" key={requestRecord.id}>
+                    <div>
+                      <Badge
+                        tone={
+                          requestRecord.state === "submitted"
+                            ? "success"
+                            : requestRecord.state === "open"
+                              ? "info"
+                              : "neutral"
+                        }
+                      >
+                        {titleCase(requestRecord.state)}
+                      </Badge>
+                      <strong>{titleCase(requestRecord.kind)} certificate</strong>
+                      <span>
+                        {requestRecord.deliveryMethod === "smtp"
+                          ? `${requestRecord.recipientEmail ?? "No recipient"} · ${titleCase(requestRecord.deliveryStatus)}`
+                          : "Manual secure link"}
+                      </span>
+                    </div>
+                    <dl>
+                      <div>
+                        <dt>Created</dt>
+                        <dd>{formatDate(requestRecord.createdAt)}</dd>
+                      </div>
+                      <div>
+                        <dt>Expires</dt>
+                        <dd>{formatDate(requestRecord.expiresAt)}</dd>
+                      </div>
+                      {requestRecord.submittedAt && (
+                        <div>
+                          <dt>Submitted</dt>
+                          <dd>{formatDate(requestRecord.submittedAt)}</dd>
+                        </div>
+                      )}
+                    </dl>
+                    {requestRecord.deliveryError && (
+                      <small className="text-danger">{requestRecord.deliveryError}</small>
+                    )}
+                    {requestRecord.state === "open" && user?.role !== "viewer" && (
+                      <Button
+                        variant="quiet"
+                        size="sm"
+                        onClick={() => cancelRequest(requestRecord.id)}
+                      >
+                        <Trash2 size={14} /> Cancel
+                      </Button>
+                    )}
+                  </article>
+                ))}
               </div>
             )}
           </Card>
@@ -457,14 +596,95 @@ export function VendorDetailPage() {
               </div>
             )}
             {user?.role !== "viewer" && (
-              <Button variant="secondary" size="sm" onClick={createLink} loading={creatingLink}>
+              <Button variant="secondary" size="sm" onClick={openRequest}>
                 <Plus size={15} />
-                New 14-day link
+                New tracked request
               </Button>
             )}
           </Card>
         </aside>
       </div>
+
+      <Modal
+        open={requestOpen}
+        onClose={() => !creatingRequest && setRequestOpen(false)}
+        title="Request a certificate"
+        description="Create one tracked, single-use upload request for this vendor."
+        footer={
+          <>
+            <Button
+              variant="quiet"
+              onClick={() => setRequestOpen(false)}
+              disabled={creatingRequest}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" form="certificate-request-form" loading={creatingRequest}>
+              {deliveryMethod === "smtp" ? "Queue request email" : "Create secure link"}
+            </Button>
+          </>
+        }
+      >
+        <form id="certificate-request-form" className="modal-form" onSubmit={createRequest}>
+          <Field label="Request type">
+            <Select
+              value={requestKind}
+              onChange={(event) => setRequestKind(event.target.value as "initial" | "renewal")}
+            >
+              <option value="initial">Initial certificate</option>
+              <option value="renewal">Renewal certificate</option>
+            </Select>
+          </Field>
+          <Field
+            label="Delivery"
+            hint="Email status means accepted by SMTP, not delivered to or opened by the recipient."
+          >
+            <Select
+              value={deliveryMethod}
+              onChange={(event) => setDeliveryMethod(event.target.value as "manual" | "smtp")}
+            >
+              <option value="manual">Show a one-time share URL</option>
+              <option value="smtp" disabled={!smtpConfigured}>
+                {smtpConfigured ? "Queue fixed-text email" : "Email unavailable (configure SMTP)"}
+              </option>
+            </Select>
+          </Field>
+          <Field label="Recipient name">
+            <TextInput
+              value={requestRecipientName}
+              onChange={(event) => setRequestRecipientName(event.target.value)}
+            />
+          </Field>
+          <Field label="Recipient email">
+            <TextInput
+              type="email"
+              required={deliveryMethod === "smtp"}
+              value={requestRecipientEmail}
+              onChange={(event) => setRequestRecipientEmail(event.target.value)}
+            />
+          </Field>
+          <Field label="Link lifetime">
+            <Select
+              value={requestTtlDays}
+              onChange={(event) => setRequestTtlDays(event.target.value)}
+            >
+              <option value="7">7 days</option>
+              <option value="14">14 days</option>
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+            </Select>
+          </Field>
+          {requestError && (
+            <div className="form-error" role="alert">
+              {requestError}
+            </div>
+          )}
+          <Callout tone="info" title="Document-scoped request">
+            Submission through this link enters human review. The request does not establish live
+            policy status.
+          </Callout>
+        </form>
+      </Modal>
 
       <Modal
         open={editOpen}

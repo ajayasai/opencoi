@@ -1,0 +1,416 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ajayasai/opencoi/blob/main/docs/schemas/evidence-bundle-v1.schema.json",
+  "title": "OpenCOI signed evidence bundle v1",
+  "description": "A portable, signed record of one document assessment. It does not assert live policy status.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "exportedAt", "payload", "integrity"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "exportedAt": { "$ref": "#/$defs/instant" },
+    "payload": { "$ref": "#/$defs/payload" },
+    "integrity": { "$ref": "#/$defs/integrity" }
+  },
+  "$defs": {
+    "instant": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "nullableString": { "type": ["string", "null"] },
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "canonicalValue": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "boolean" },
+        { "type": "number" },
+        { "type": "string" },
+        { "type": "array", "items": { "$ref": "#/$defs/canonicalValue" } },
+        {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/canonicalValue" }
+        }
+      ]
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "name": { "type": "string" }
+      }
+    },
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generator",
+        "scope",
+        "exportedBy",
+        "sourceDocument",
+        "review",
+        "machineProposal",
+        "confirmedFacts",
+        "evidence",
+        "requirementSnapshot",
+        "findings",
+        "exceptions",
+        "statusAtExport",
+        "audit"
+      ],
+      "properties": {
+        "generator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "version", "origin"],
+          "properties": {
+            "name": { "const": "OpenCOI" },
+            "version": { "type": "string", "minLength": 1 },
+            "origin": { "type": "string", "minLength": 1 }
+          }
+        },
+        "scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["organization", "vendor", "certificateId"],
+          "properties": {
+            "organization": { "$ref": "#/$defs/identity" },
+            "vendor": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id", "legalName", "vendorTypeAtExport"],
+              "properties": {
+                "id": { "type": "string", "minLength": 1 },
+                "legalName": { "type": "string" },
+                "vendorTypeAtExport": { "$ref": "#/$defs/identity" }
+              }
+            },
+            "certificateId": { "type": "string", "minLength": 1 }
+          }
+        },
+        "exportedBy": { "$ref": "#/$defs/identity" },
+        "sourceDocument": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "originalFilename", "mimeType", "byteSize", "sha256", "uploadedAt"],
+          "properties": {
+            "id": { "type": "string", "minLength": 1 },
+            "originalFilename": { "type": "string" },
+            "mimeType": { "type": "string" },
+            "byteSize": { "type": "integer", "minimum": 0 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "uploadedAt": { "$ref": "#/$defs/instant" }
+          }
+        },
+        "review": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "reviewedBy",
+            "reviewedAt",
+            "evaluationDate",
+            "requirementVersion",
+            "evaluationVendorType"
+          ],
+          "properties": {
+            "status": { "type": "string" },
+            "reviewedBy": {
+              "anyOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "name"],
+                  "properties": {
+                    "id": { "type": "string", "minLength": 1 },
+                    "name": { "$ref": "#/$defs/nullableString" }
+                  }
+                }
+              ]
+            },
+            "reviewedAt": {
+              "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/instant" }]
+            },
+            "evaluationDate": { "$ref": "#/$defs/nullableString" },
+            "requirementVersion": { "type": ["integer", "null"], "minimum": 1 },
+            "evaluationVendorType": {
+              "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/identity" }]
+            }
+          }
+        },
+        "machineProposal": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": { "$ref": "#/$defs/canonicalValue" }
+            }
+          ]
+        },
+        "confirmedFacts": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "namedInsured",
+                "issueDate",
+                "producer",
+                "certificateHolder",
+                "policies"
+              ],
+              "properties": {
+                "namedInsured": { "$ref": "#/$defs/nullableString" },
+                "issueDate": { "$ref": "#/$defs/nullableString" },
+                "producer": { "$ref": "#/$defs/nullableString" },
+                "certificateHolder": { "$ref": "#/$defs/nullableString" },
+                "policies": {
+                  "type": "array",
+                  "items": { "$ref": "#/$defs/canonicalValue" }
+                }
+              }
+            }
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/canonicalValue" }
+        },
+        "requirementSnapshot": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["version", "vendorType", "evaluatedRuleset", "publication"],
+              "properties": {
+                "version": { "type": "integer", "minimum": 1 },
+                "vendorType": { "$ref": "#/$defs/identity" },
+                "evaluatedRuleset": {
+                  "type": "object",
+                  "additionalProperties": { "$ref": "#/$defs/canonicalValue" }
+                },
+                "publication": {
+                  "anyOf": [
+                    { "type": "null" },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": ["id", "publishedAt", "publishedBy", "requirements"],
+                      "properties": {
+                        "id": { "type": "string", "minLength": 1 },
+                        "publishedAt": { "$ref": "#/$defs/instant" },
+                        "publishedBy": {
+                          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/identity" }]
+                        },
+                        "requirements": {
+                          "type": "array",
+                          "items": { "$ref": "#/$defs/canonicalValue" }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "requirementId",
+              "category",
+              "outcome",
+              "code",
+              "severity",
+              "coverageType",
+              "title",
+              "message",
+              "expected",
+              "observed",
+              "evidenceIds",
+              "evaluatedAt"
+            ],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "requirementId": { "$ref": "#/$defs/nullableString" },
+              "category": { "type": "string" },
+              "outcome": { "type": "string" },
+              "code": { "type": "string" },
+              "severity": { "type": "string" },
+              "coverageType": { "$ref": "#/$defs/nullableString" },
+              "title": { "$ref": "#/$defs/nullableString" },
+              "message": { "type": "string" },
+              "expected": { "$ref": "#/$defs/canonicalValue" },
+              "observed": { "$ref": "#/$defs/canonicalValue" },
+              "evidenceIds": { "type": "array", "items": { "type": "string" } },
+              "evaluatedAt": { "$ref": "#/$defs/instant" }
+            }
+          }
+        },
+        "exceptions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "findingId",
+              "status",
+              "request",
+              "decisionReason",
+              "requestedBy",
+              "requestedAt",
+              "decidedBy",
+              "decidedAt",
+              "expiresAt"
+            ],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "findingId": { "type": "string", "minLength": 1 },
+              "status": { "type": "string" },
+              "request": { "$ref": "#/$defs/canonicalValue" },
+              "decisionReason": { "$ref": "#/$defs/nullableString" },
+              "requestedBy": { "$ref": "#/$defs/identity" },
+              "requestedAt": { "$ref": "#/$defs/instant" },
+              "decidedBy": {
+                "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/identity" }]
+              },
+              "decidedAt": {
+                "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/instant" }]
+              },
+              "expiresAt": {
+                "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/date" }]
+              }
+            }
+          }
+        },
+        "statusAtExport": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["documentCheck", "documentLifecycle", "asOf", "limitation"],
+          "properties": {
+            "documentCheck": { "type": "string" },
+            "documentLifecycle": { "type": "string" },
+            "asOf": { "$ref": "#/$defs/instant" },
+            "limitation": { "type": "string", "minLength": 1 }
+          }
+        },
+        "audit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "organizationChainVerifiedAtExport",
+            "checkedEvents",
+            "error",
+            "head",
+            "certificateEvents"
+          ],
+          "properties": {
+            "organizationChainVerifiedAtExport": { "type": "boolean" },
+            "checkedEvents": { "type": "integer", "minimum": 0 },
+            "error": { "$ref": "#/$defs/nullableString" },
+            "head": {
+              "anyOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["sequence", "eventHash", "occurredAt"],
+                  "properties": {
+                    "sequence": { "type": "integer", "minimum": 1 },
+                    "eventHash": { "$ref": "#/$defs/sha256" },
+                    "occurredAt": { "$ref": "#/$defs/instant" }
+                  }
+                }
+              ]
+            },
+            "certificateEvents": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "sequence",
+                  "id",
+                  "actorType",
+                  "actorUserId",
+                  "action",
+                  "entityType",
+                  "entityId",
+                  "occurredAt",
+                  "metadata",
+                  "previousHash",
+                  "eventHash"
+                ],
+                "properties": {
+                  "sequence": { "type": "integer", "minimum": 1 },
+                  "id": { "type": "string", "minLength": 1 },
+                  "actorType": { "type": "string" },
+                  "actorUserId": { "$ref": "#/$defs/nullableString" },
+                  "action": { "type": "string" },
+                  "entityType": { "type": "string" },
+                  "entityId": { "$ref": "#/$defs/nullableString" },
+                  "occurredAt": { "$ref": "#/$defs/instant" },
+                  "metadata": { "$ref": "#/$defs/canonicalValue" },
+                  "previousHash": { "$ref": "#/$defs/sha256" },
+                  "eventHash": { "$ref": "#/$defs/sha256" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonicalization", "digest", "signature"],
+      "properties": {
+        "canonicalization": { "const": "OPENCOI_CANONICAL_JSON_V1" },
+        "digest": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "value"],
+          "properties": {
+            "algorithm": { "const": "SHA-256" },
+            "value": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "signature": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "keyId", "publicKeySpki", "publicKeyFingerprint", "value"],
+          "properties": {
+            "algorithm": { "const": "Ed25519" },
+            "keyId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}$"
+            },
+            "publicKeySpki": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$",
+              "maxLength": 8192
+            },
+            "publicKeyFingerprint": { "$ref": "#/$defs/sha256" },
+            "value": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{86}$"
+            }
+          }
+        }
+      }
+    }
+  }
+}

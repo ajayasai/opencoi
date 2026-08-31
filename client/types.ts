@@ -254,6 +254,43 @@ export interface VendorDetail extends VendorSummary {
   }>;
 }
 
+export interface CertificateRequestRecord {
+  id: string;
+  organizationId: string;
+  vendorId: string;
+  uploadLinkId: string;
+  sourceCertificateId: string | null;
+  submittedCertificateId: string | null;
+  kind: "initial" | "renewal";
+  deliveryMethod: "manual" | "smtp";
+  deliveryStatus:
+    | "manual_ready"
+    | "queued"
+    | "processing"
+    | "accepted"
+    | "failed"
+    | "cancelled"
+    | "superseded"
+    | "expired";
+  recipientName: string | null;
+  recipientEmail: string | null;
+  state: "open" | "submitted" | "cancelled" | "expired";
+  expiresAt: string;
+  uploadUseCount: number;
+  uploadRevokedAt: string | null;
+  deliverySecretAvailable: boolean;
+  attemptCount: number;
+  lastAttemptAt: string | null;
+  nextAttemptAt: string | null;
+  acceptedAt: string | null;
+  deliveryError: string | null;
+  createdByUserId: string | null;
+  submittedAt: string | null;
+  cancelledAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface DashboardData {
   stats: {
     totalVendors: number;
@@ -291,6 +328,7 @@ export interface ExceptionRecord {
   reason: string;
   compensatingControls?: string | null;
   requestedBy: string;
+  requestedByUserId: string;
   requestedAt: string;
   expiresAt: string;
   status: "pending" | "approved" | "rejected" | "revoked" | "expired";

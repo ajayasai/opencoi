@@ -10,6 +10,7 @@ import {
   passwordHashNeedsUpgrade,
   verifyOpaqueToken,
   verifyPassword,
+  verifyPasswordHashesSequentially,
   verifyPasswordOrDummy,
 } from "./security.js";
 
@@ -34,6 +35,28 @@ describe("password security", () => {
     ).resolves.toBe(false);
     expect(verifier).toHaveBeenCalledOnce();
     expect(verifier.mock.calls[0]?.[1]).toMatch(/^scrypt\$v=1\$N=65536,r=8,p=1,l=32\$/);
+  });
+
+  it("bounds multi-workspace password verification to one memory-hard job at a time", async () => {
+    let active = 0;
+    let maximumActive = 0;
+    const verifier = vi.fn(async (_password: string, hash: string) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      active -= 1;
+      return hash === "matching";
+    });
+
+    await expect(
+      verifyPasswordHashesSequentially(
+        "candidate password",
+        ["first", "matching", "third", "matching"],
+        verifier,
+      ),
+    ).resolves.toEqual([false, true, false, true]);
+    expect(verifier).toHaveBeenCalledTimes(4);
+    expect(maximumActive).toBe(1);
   });
 
   it("enforces useful password length bounds", async () => {

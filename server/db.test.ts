@@ -70,7 +70,7 @@ describe("database initialization", () => {
       foreign_keys: 1,
     });
     expect(database.prepare("PRAGMA user_version").get()).toEqual({
-      user_version: 3,
+      user_version: 4,
     });
     const tables = database
       .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
@@ -93,6 +93,7 @@ describe("database initialization", () => {
         "exceptions",
         "upload_links",
         "reminders",
+        "certificate_requests",
         "audit_events",
       ]),
     );
@@ -136,7 +137,7 @@ describe("database initialization", () => {
 
     initializeDatabase(database);
 
-    expect(database.prepare("PRAGMA user_version").get()).toEqual({ user_version: 3 });
+    expect(database.prepare("PRAGMA user_version").get()).toEqual({ user_version: 4 });
     const columns = database
       .prepare("PRAGMA table_info(reminders)")
       .all()
@@ -183,7 +184,7 @@ describe("database initialization", () => {
 
     initializeDatabase(database);
 
-    expect(database.prepare("PRAGMA user_version").get()).toEqual({ user_version: 3 });
+    expect(database.prepare("PRAGMA user_version").get()).toEqual({ user_version: 4 });
     expect(database.prepare("SELECT name FROM organizations WHERE id = 'org-a'").get()).toEqual({
       name: "Organization A",
     });

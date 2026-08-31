@@ -1,6 +1,6 @@
 # Architecture
 
-OpenCOI v0.2 keeps a deliberately understandable single-node data plane: a React browser client, Node.js/Express, SQLite, and local document storage. It adds a versioned service API and independently runnable webhook worker, while continuing to favor inspectable document decisions and operational simplicity over live insurance-system connectivity or unsupported horizontal-scale claims.
+OpenCOI v0.3 keeps a deliberately understandable single-node data plane: a React browser client, Node.js/Express, SQLite, and local document storage. It includes a versioned service API plus independently runnable webhook and certificate-request workers, while continuing to favor inspectable document decisions and operational simplicity over live insurance-system connectivity or unsupported horizontal-scale claims.
 
 The system's output is always scoped to an uploaded document. No component contacts an insurer, broker, carrier, or agency-management system to establish current policy status.
 
@@ -15,6 +15,7 @@ flowchart LR
     F[(Filesystem\noriginal PDFs)]
     M[Optional SMTP server]
     W[Optional webhook worker]
+    R[Optional request-email worker]
     H[Public HTTPS webhook targets]
 
     B -->|same-origin JSON, multipart PDF| A
@@ -26,13 +27,15 @@ flowchart LR
     A -->|transactional outbox| D
     W --> D
     W -->|signed event delivery| H
+    R --> D
+    R -->|neutral upload invitation| M
 ```
 
 In development, Vite serves the browser app on port 5173 and proxies `/api` to Express on port 4174. In production, Express serves the compiled browser assets and API from one origin.
 
 ## Browser client
 
-The `client/` application provides the dashboard, vendor directory, requirements editor, intake and review workspace, exception decisions, reminders, audit view, and CSV download entry points.
+The `client/` application provides the dashboard, vendor directory, tracked certificate requests, requirements editor, intake and review workspace, signed evidence export, exception decisions, reminders, audit view, and CSV download entry points.
 
 Document intake is intentionally client-first:
 
@@ -53,6 +56,7 @@ Vendor-link submissions are forced to `UNCONFIRMED` by the server, regardless of
 - deterministic date, limit, coverage, policy-field, and endorsement evaluation;
 - OCR text normalization and conservative field proposal heuristics; and
 - vendor-neutral benchmark contracts and deterministic fact/citation scoring; and
+- canonical JSON and strict evidence-bundle signature verification; and
 - CSV serialization with spreadsheet-formula neutralization.
 
 The evaluator takes all time-sensitive context explicitly, including an ISO evaluation date. It does not read the system clock internally. Given the same canonical document facts, rule version, evaluation date, and engine version, it returns the same base findings.
@@ -68,12 +72,13 @@ The `server/` process owns the following boundaries:
 - organization scoping and role authorization;
 - trusted-origin and CSRF enforcement;
 - a global per-client request ceiling plus stricter login and public-link limits;
-- vendor, requirement, document, exception, reminder, export, and audit routes;
+- vendor, requirement, document, certificate-request, exception, reminder, export, and audit routes;
 - PDF byte-level triage and filesystem storage;
 - canonical server-side evaluation and persisted findings;
 - UI projections such as dashboard and lifecycle status; and
 - tenant-bound scoped service accounts, the `/api/v1` contract, domain events, and integration administration; and
-- scheduled or CLI-triggered reminder cycles.
+- scheduled or CLI-triggered reminder cycles; and
+- authorized, audited Ed25519-signed evidence-bundle generation.
 
 The browser JSON API is under `/api`; `/api/health` is unauthenticated for container health checks. Most application endpoints require a session. Mutating authenticated routes additionally require a trusted origin, a matching CSRF header and readable CSRF cookie, and an allowed role. Public upload routes use a high-entropy, expiring, revocable link token and a narrower API surface.
 
@@ -81,7 +86,7 @@ Third-party clients use the separately authenticated and versioned `/api/v1` sur
 
 ## Persistence model
 
-SQLite stores organizations, users, sessions, short-lived OIDC login transactions and identity bindings, vendor types, published requirement snapshots, vendors, upload links, document metadata, certificate facts, policy rows, endorsement evidence, findings, exceptions, reminders, audit events, service accounts, webhook endpoints, append-only domain events, delivery state, and API idempotency records.
+SQLite stores organizations, users, sessions, short-lived OIDC login transactions and identity bindings, vendor types, published requirement snapshots, vendors, upload links, tracked certificate requests, document metadata, certificate facts, policy rows, endorsement evidence, findings, exceptions, reminders, audit events, encrypted evidence-signing keys, service accounts, webhook endpoints, append-only domain events, delivery state, and API idempotency records.
 
 Important storage properties include:
 
@@ -100,7 +105,7 @@ The standard container mounts both at `/app/data`. See [BACKUP_RESTORE.md](BACKU
 
 Publishing a requirement profile creates a numbered JSON snapshot and updates the active projection used for new evaluations. A certificate stores the version and evaluation date used, while its findings preserve the resulting expected and observed values and reason codes.
 
-v0.2 exposes the current profile editor and historical result context, but not an arbitrary replay or migration console. A requirement edit does not silently recompute prior stored findings.
+v0.3 exposes the current profile editor and historical result context, but not an arbitrary replay or migration console. A requirement edit does not silently recompute prior stored findings.
 
 ## Reminder execution
 
@@ -110,7 +115,21 @@ The reminder service selects active vendors whose latest confirmed certificate s
 - Without SMTP, it records in-app reminder work without attempting external delivery.
 - The server can poll on the configured interval, and operators can run the same cycle with `npm run reminders:run`.
 
+Each SMTP attempt is claimed immediately before network I/O, uses a stable
+message ID and bounded connection/submission time, and can be completed only by
+the exact claim timestamp and attempt number. This prevents a stale background
+or manual cycle from overwriting a newer claim while preserving documented
+at-least-once recovery after an ambiguous crash.
+
 Reminder language says that the date came from a submitted document. A missing reminder is not evidence that a policy remains active.
+
+## Certificate-request execution
+
+A tracked request owns one single-use upload link. Manual delivery reveals the link once to an authenticated user and stores only its digest. SMTP delivery encrypts the link token with tenant-and-request-bound context through its bounded delivery attempt or retry. The worker uses a short lease, a neutral fixed subject, bounded retries, and fair one-request-per-organization rounds. Acceptance means only that the configured SMTP server accepted the message; it does not mean the inbox received or opened it. Terminal failure, acceptance, cancellation, or exact linked submission removes the recoverable token immediately; expiry removes it when the next request-worker cycle observes that state.
+
+## Signed evidence bundles
+
+An authorized user can export one certificate assessment as versioned JSON. The payload includes the source-document SHA-256, immutable extraction proposal, confirmed facts, evidence citations, exact requirement snapshot, findings, exceptions, bounded status language, and an audit-chain checkpoint. OpenCOI signs the canonical unsigned payload with an organization-specific Ed25519 key whose private material is encrypted using deployment key material. The embedded public key proves integrity, not organization identity; identity-sensitive consumers must obtain and compare the fingerprint through a separately trusted channel. The [published schema and verifier](EVIDENCE_BUNDLES.md) are part of the portability boundary.
 
 ## Authentication and authorization
 
@@ -125,6 +144,10 @@ The bootstrap administrator is created only when there are no users. Local passw
 - A separate readable CSRF cookie must match the `X-CSRF-Token` header and stored digest.
 - Roles are `owner`, `admin`, `reviewer`, and `viewer`; routes enforce the roles permitted for each mutation.
 - Data repositories and direct queries are scoped by organization.
+- Local sign-in accepts an optional workspace slug. If the same credentials
+  actually match more than one organization, OpenCOI requires the slug only
+  after password verification so the unauthenticated response does not expose
+  cross-tenant email membership.
 
 OpenCOI does not enforce an identity provider's MFA policy and does not include SCIM, passkeys, provider group-to-role mapping, multiple OIDC providers, or an account-administration UI. Test the local break-glass account and provider recovery procedures before depending on SSO.
 
@@ -147,13 +170,16 @@ An API mutation and its domain event are committed in the same immediate SQLite
 transaction. Matching webhook delivery rows are part of that outbox write.
 Workers atomically lease due rows, sign the exact serialized event body, resolve
 and validate a public HTTPS target, pin the checked IP for the request, and
-record success, retry, or dead-letter state. Delivery is at least once and the
+record success, retry, or dead-letter state. Each row is claimed immediately
+before outbound I/O, endpoint status is rechecked after DNS resolution, actual
+attempt/completion timestamps are stored, and only the current claim token can
+complete it. Delivery is at least once and the
 stable event ID is the receiver's deduplication key. The worker can run as a
 separate process or optional Compose-profile service.
 
 ## Deployment topology and scale
 
-The supported bundled v0.2 topology is one application process or container, optional external job workers, and one persistent data directory. Do not run multiple web replicas against the same SQLite database or document directory.
+The supported bundled v0.3 topology is one application process or container, optional external job workers, and one persistent data directory. Do not run multiple web replicas against the same SQLite database or document directory.
 
 This boundary keeps deployment and backup comprehensible, but it also means:
 
@@ -182,7 +208,7 @@ The Compose service runs without Linux capabilities, as a non-root user, with a 
 - Server-generated compliance CSV neutralizes attacker-controlled cells before spreadsheet interpretation.
 - Audit verification recomputes the event hash chain and exposes inconsistency; it does not make a compromised host trustworthy.
 
-## Explicit non-goals for v0.2
+## Explicit non-goals for v0.3
 
 - live insurer, carrier, broker, or agency-management-system monitoring;
 - policy cancellation or reinstatement feeds;

@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const DATABASE_SCHEMA_VERSION = 3;
+export const DATABASE_SCHEMA_VERSION = 4;
 
 const SCHEMA = `
 CREATE TABLE organizations (
@@ -366,6 +366,59 @@ CREATE TABLE reminders (
     REFERENCES certificates(organization_id, id) ON DELETE CASCADE
 ) STRICT;
 
+CREATE TABLE certificate_requests (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  vendor_id TEXT NOT NULL,
+  upload_link_id TEXT NOT NULL,
+  source_certificate_id TEXT,
+  submitted_certificate_id TEXT,
+  request_kind TEXT NOT NULL CHECK (request_kind IN ('initial', 'renewal')),
+  delivery_method TEXT NOT NULL CHECK (delivery_method IN ('manual', 'smtp')),
+  delivery_status TEXT NOT NULL
+    CHECK (delivery_status IN ('manual_ready', 'queued', 'processing', 'accepted', 'failed', 'cancelled', 'superseded', 'expired')),
+  recipient_name TEXT,
+  recipient_email TEXT COLLATE NOCASE,
+  state TEXT NOT NULL DEFAULT 'open'
+    CHECK (state IN ('open', 'submitted', 'cancelled', 'expired')),
+  upload_token_ciphertext TEXT,
+  attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  last_attempt_at TEXT,
+  next_attempt_at TEXT,
+  claim_token TEXT,
+  claimed_at TEXT,
+  accepted_at TEXT,
+  delivery_error TEXT,
+  created_by_user_id TEXT,
+  submitted_at TEXT,
+  cancelled_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE (organization_id, id),
+  UNIQUE (organization_id, upload_link_id),
+  FOREIGN KEY (organization_id, vendor_id)
+    REFERENCES vendors(organization_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (organization_id, upload_link_id)
+    REFERENCES upload_links(organization_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (organization_id, source_certificate_id)
+    REFERENCES certificates(organization_id, id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id, submitted_certificate_id)
+    REFERENCES certificates(organization_id, id) ON DELETE RESTRICT,
+  FOREIGN KEY (organization_id, created_by_user_id)
+    REFERENCES users(organization_id, id) ON DELETE RESTRICT,
+  CHECK (delivery_method <> 'smtp' OR recipient_email IS NOT NULL),
+  CHECK (delivery_method <> 'manual' OR delivery_status = 'manual_ready'),
+  CHECK (delivery_method <> 'smtp' OR delivery_status <> 'manual_ready'),
+  CHECK (state <> 'open' OR delivery_status NOT IN ('queued', 'processing') OR upload_token_ciphertext IS NOT NULL),
+  CHECK (delivery_status = 'processing' OR (claim_token IS NULL AND claimed_at IS NULL)),
+  CHECK (delivery_status <> 'processing' OR (claim_token IS NOT NULL AND claimed_at IS NOT NULL)),
+  CHECK (state = 'open' OR upload_token_ciphertext IS NULL),
+  CHECK (state <> 'submitted' OR (submitted_certificate_id IS NOT NULL AND submitted_at IS NOT NULL)),
+  CHECK (state = 'submitted' OR (submitted_certificate_id IS NULL AND submitted_at IS NULL)),
+  CHECK (state <> 'cancelled' OR cancelled_at IS NOT NULL),
+  CHECK (state = 'cancelled' OR cancelled_at IS NULL)
+) STRICT;
+
 CREATE TABLE audit_events (
   id TEXT PRIMARY KEY,
   organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE RESTRICT,
@@ -416,6 +469,10 @@ CREATE INDEX upload_links_active_idx
   ON upload_links (organization_id, token_hash, expires_at) WHERE revoked_at IS NULL;
 CREATE INDEX reminders_due_idx
   ON reminders (organization_id, status, retry_eligible, next_attempt_at, scheduled_for);
+CREATE INDEX certificate_requests_vendor_idx
+  ON certificate_requests (organization_id, vendor_id, created_at DESC);
+CREATE INDEX certificate_requests_delivery_idx
+  ON certificate_requests (organization_id, state, delivery_status, next_attempt_at, created_at);
 CREATE INDEX audit_events_chain_idx
   ON audit_events (organization_id, sequence_number);
 
@@ -472,29 +529,41 @@ export const openDatabase = (
   return database;
 };
 
-export const initializeDatabase = (database: OpenCoiDatabase): void => {
-  const row = database.prepare("PRAGMA user_version").get() as { user_version: number } | undefined;
-  let version = row?.user_version ?? 0;
-  if (version > DATABASE_SCHEMA_VERSION) {
-    throw new Error(
-      `Database schema version ${version} is newer than supported version ${DATABASE_SCHEMA_VERSION}`,
-    );
+const withImmediateTransaction = <T>(database: OpenCoiDatabase, work: () => T): T => {
+  if (database.isTransaction) {
+    return work();
   }
-  if (version === 0) {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const result = work();
+    database.exec("COMMIT");
+    return result;
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+};
+
+export const initializeDatabase = (database: OpenCoiDatabase): void =>
+  withImmediateTransaction(database, () => {
+    // Read the version only after holding SQLite's write reservation. The web
+    // process and optional workers may start together against the same file;
+    // none may act on a stale pre-lock schema version.
+    const row = database.prepare("PRAGMA user_version").get() as
+      | { user_version: number }
+      | undefined;
+    let version = row?.user_version ?? 0;
+    if (version > DATABASE_SCHEMA_VERSION) {
+      throw new Error(
+        `Database schema version ${version} is newer than supported version ${DATABASE_SCHEMA_VERSION}`,
+      );
+    }
+    if (version === 0) {
       database.exec(SCHEMA);
       database.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
-      database.exec("COMMIT");
       version = DATABASE_SCHEMA_VERSION;
-    } catch (error) {
-      database.exec("ROLLBACK");
-      throw error;
     }
-  }
-  if (version === 1) {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    if (version === 1) {
       database.exec(`
         ALTER TABLE reminders
           ADD COLUMN retry_eligible INTEGER NOT NULL DEFAULT 0 CHECK (retry_eligible IN (0, 1));
@@ -504,16 +573,9 @@ export const initializeDatabase = (database: OpenCoiDatabase): void => {
           ON reminders (organization_id, status, retry_eligible, next_attempt_at, scheduled_for);
         PRAGMA user_version = 2;
       `);
-      database.exec("COMMIT");
       version = 2;
-    } catch (error) {
-      database.exec("ROLLBACK");
-      throw error;
     }
-  }
-  if (version === 2) {
-    database.exec("BEGIN IMMEDIATE");
-    try {
+    if (version === 2) {
       database.exec(`
         CREATE TABLE oidc_identities (
           id TEXT PRIMARY KEY,
@@ -554,33 +616,74 @@ export const initializeDatabase = (database: OpenCoiDatabase): void => {
           WHERE consumed_at IS NULL;
         PRAGMA user_version = 3;
       `);
-      database.exec("COMMIT");
       version = 3;
-    } catch (error) {
-      database.exec("ROLLBACK");
-      throw error;
     }
-  }
-};
+    if (version === 3) {
+      database.exec(`
+        CREATE TABLE certificate_requests (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          vendor_id TEXT NOT NULL,
+          upload_link_id TEXT NOT NULL,
+          source_certificate_id TEXT,
+          submitted_certificate_id TEXT,
+          request_kind TEXT NOT NULL CHECK (request_kind IN ('initial', 'renewal')),
+          delivery_method TEXT NOT NULL CHECK (delivery_method IN ('manual', 'smtp')),
+          delivery_status TEXT NOT NULL
+            CHECK (delivery_status IN ('manual_ready', 'queued', 'processing', 'accepted', 'failed', 'cancelled', 'superseded', 'expired')),
+          recipient_name TEXT,
+          recipient_email TEXT COLLATE NOCASE,
+          state TEXT NOT NULL DEFAULT 'open'
+            CHECK (state IN ('open', 'submitted', 'cancelled', 'expired')),
+          upload_token_ciphertext TEXT,
+          attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+          last_attempt_at TEXT,
+          next_attempt_at TEXT,
+          claim_token TEXT,
+          claimed_at TEXT,
+          accepted_at TEXT,
+          delivery_error TEXT,
+          created_by_user_id TEXT,
+          submitted_at TEXT,
+          cancelled_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (organization_id, id),
+          UNIQUE (organization_id, upload_link_id),
+          FOREIGN KEY (organization_id, vendor_id)
+            REFERENCES vendors(organization_id, id) ON DELETE CASCADE,
+          FOREIGN KEY (organization_id, upload_link_id)
+            REFERENCES upload_links(organization_id, id) ON DELETE CASCADE,
+          FOREIGN KEY (organization_id, source_certificate_id)
+            REFERENCES certificates(organization_id, id) ON DELETE RESTRICT,
+          FOREIGN KEY (organization_id, submitted_certificate_id)
+            REFERENCES certificates(organization_id, id) ON DELETE RESTRICT,
+          FOREIGN KEY (organization_id, created_by_user_id)
+            REFERENCES users(organization_id, id) ON DELETE RESTRICT,
+          CHECK (delivery_method <> 'smtp' OR recipient_email IS NOT NULL),
+          CHECK (delivery_method <> 'manual' OR delivery_status = 'manual_ready'),
+          CHECK (delivery_method <> 'smtp' OR delivery_status <> 'manual_ready'),
+          CHECK (state <> 'open' OR delivery_status NOT IN ('queued', 'processing') OR upload_token_ciphertext IS NOT NULL),
+          CHECK (delivery_status = 'processing' OR (claim_token IS NULL AND claimed_at IS NULL)),
+          CHECK (delivery_status <> 'processing' OR (claim_token IS NOT NULL AND claimed_at IS NOT NULL)),
+          CHECK (state = 'open' OR upload_token_ciphertext IS NULL),
+          CHECK (state <> 'submitted' OR (submitted_certificate_id IS NOT NULL AND submitted_at IS NOT NULL)),
+          CHECK (state = 'submitted' OR (submitted_certificate_id IS NULL AND submitted_at IS NULL)),
+          CHECK (state <> 'cancelled' OR cancelled_at IS NOT NULL),
+          CHECK (state = 'cancelled' OR cancelled_at IS NULL)
+        ) STRICT;
+        CREATE INDEX certificate_requests_vendor_idx
+          ON certificate_requests (organization_id, vendor_id, created_at DESC);
+        CREATE INDEX certificate_requests_delivery_idx
+          ON certificate_requests (organization_id, state, delivery_status, next_attempt_at, created_at);
+        PRAGMA user_version = 4;
+      `);
+    }
+  });
 
 const nowIso = (): string => new Date().toISOString();
 const newId = (): string => randomUUID();
 const asJson = (value: unknown): string => JSON.stringify(value ?? {});
-
-const withImmediateTransaction = <T>(database: OpenCoiDatabase, work: () => T): T => {
-  if (database.isTransaction) {
-    return work();
-  }
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    const result = work();
-    database.exec("COMMIT");
-    return result;
-  } catch (error) {
-    database.exec("ROLLBACK");
-    throw error;
-  }
-};
 
 export interface OrganizationRow {
   id: string;
@@ -681,6 +784,42 @@ export interface UploadLinkRow {
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
+}
+
+export interface CertificateRequestRow {
+  id: string;
+  organization_id: string;
+  vendor_id: string;
+  upload_link_id: string;
+  source_certificate_id: string | null;
+  submitted_certificate_id: string | null;
+  request_kind: "initial" | "renewal";
+  delivery_method: "manual" | "smtp";
+  delivery_status:
+    | "manual_ready"
+    | "queued"
+    | "processing"
+    | "accepted"
+    | "failed"
+    | "cancelled"
+    | "superseded"
+    | "expired";
+  recipient_name: string | null;
+  recipient_email: string | null;
+  state: "open" | "submitted" | "cancelled" | "expired";
+  upload_token_ciphertext: string | null;
+  attempt_count: number;
+  last_attempt_at: string | null;
+  next_attempt_at: string | null;
+  claim_token: string | null;
+  claimed_at: string | null;
+  accepted_at: string | null;
+  delivery_error: string | null;
+  created_by_user_id: string | null;
+  submitted_at: string | null;
+  cancelled_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface DocumentRow {
@@ -1847,17 +1986,71 @@ export class OrganizationRepository {
     return Number(result.changes);
   }
 
+  claimReminder(input: {
+    id: string;
+    at?: string;
+    staleBefore?: string;
+    maxAttempts?: number;
+  }): { claimedAt: string; attemptNumber: number } | null {
+    const timestamp = input.at ?? nowIso();
+    const safeMaxAttempts = Math.max(1, Math.min(10, Math.trunc(input.maxAttempts ?? 1)));
+    const claimed = this.#database
+      .prepare(
+        `UPDATE reminders
+         SET status = 'processing', attempt_count = attempt_count + 1,
+             last_attempt_at = ?, retry_eligible = 0, next_attempt_at = NULL,
+             updated_at = ?
+         WHERE organization_id = ? AND id = ? AND (
+           (status = 'pending' AND scheduled_for <= ?)
+           OR (
+             status = 'failed' AND retry_eligible = 1
+             AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?
+           )
+           OR (
+             status = 'processing' AND last_attempt_at IS NOT NULL
+             AND ? IS NOT NULL AND last_attempt_at <= ? AND attempt_count < ?
+           )
+         )
+         RETURNING last_attempt_at AS claimed_at, attempt_count AS attempt_number`,
+      )
+      .get(
+        timestamp,
+        timestamp,
+        this.organizationId,
+        input.id,
+        timestamp,
+        timestamp,
+        input.staleBefore ?? null,
+        input.staleBefore ?? null,
+        safeMaxAttempts,
+      ) as { claimed_at: string; attempt_number: number } | undefined;
+    return claimed
+      ? { claimedAt: claimed.claimed_at, attemptNumber: claimed.attempt_number }
+      : null;
+  }
+
   markReminder(input: {
     id: string;
     status: "processing" | "sent" | "cancelled" | "failed";
     errorMessage?: string;
     retryAt?: string;
+    claimedAt?: string;
+    attemptNumber?: number;
     staleBefore?: string;
     maxAttempts?: number;
     at?: string;
   }): boolean {
     const timestamp = input.at ?? nowIso();
-    const safeMaxAttempts = Math.max(1, Math.min(10, Math.trunc(input.maxAttempts ?? 1)));
+    if (input.status === "processing") {
+      return Boolean(
+        this.claimReminder({
+          id: input.id,
+          at: timestamp,
+          ...(input.staleBefore ? { staleBefore: input.staleBefore } : {}),
+          ...(input.maxAttempts === undefined ? {} : { maxAttempts: input.maxAttempts }),
+        }),
+      );
+    }
     if (input.retryAt) {
       const retryAt = Date.parse(input.retryAt);
       if (
@@ -1868,40 +2061,18 @@ export class OrganizationRepository {
         throw new RangeError("A reminder retry must be a valid future time on a failed delivery");
       }
     }
-    const result =
-      input.status === "processing"
-        ? this.#database
-            .prepare(
-              `UPDATE reminders
-               SET status = 'processing', attempt_count = attempt_count + 1,
-                   last_attempt_at = ?, retry_eligible = 0, next_attempt_at = NULL,
-                   updated_at = ?
-               WHERE organization_id = ? AND id = ? AND (
-                 (status = 'pending' AND scheduled_for <= ?)
-                 OR (
-                   status = 'failed' AND retry_eligible = 1
-                   AND next_attempt_at IS NOT NULL AND next_attempt_at <= ?
-                 )
-                 OR (
-                   status = 'processing' AND last_attempt_at IS NOT NULL
-                   AND ? IS NOT NULL AND last_attempt_at <= ? AND attempt_count < ?
-                 )
-               )`,
-            )
-            .run(
-              timestamp,
-              timestamp,
-              this.organizationId,
-              input.id,
-              timestamp,
-              timestamp,
-              input.staleBefore ?? null,
-              input.staleBefore ?? null,
-              safeMaxAttempts,
-            )
-        : this.#database
-            .prepare(
-              `UPDATE reminders
+    const completion = input.status === "sent" || input.status === "failed";
+    if (
+      completion &&
+      (!input.claimedAt ||
+        !Number.isSafeInteger(input.attemptNumber) ||
+        (input.attemptNumber ?? 0) < 1)
+    ) {
+      throw new RangeError("A reminder completion must identify its claimed attempt");
+    }
+    const result = this.#database
+      .prepare(
+        `UPDATE reminders
                SET status = ?,
                    sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END,
                    error_message = CASE WHEN ? = 'sent' THEN NULL ELSE ? END,
@@ -1910,25 +2081,31 @@ export class OrganizationRepository {
                    updated_at = ?
                WHERE organization_id = ? AND id = ?
                  AND (
-                   status = 'processing'
+                   (
+                     ? IN ('sent', 'failed') AND status = 'processing'
+                     AND last_attempt_at = ? AND attempt_count = ?
+                   )
                    OR (? = 'cancelled' AND status IN ('pending', 'failed'))
                  )`,
-            )
-            .run(
-              input.status,
-              input.status,
-              timestamp,
-              input.status,
-              input.errorMessage ?? null,
-              input.status,
-              input.retryAt ?? null,
-              input.status,
-              input.retryAt ?? null,
-              timestamp,
-              this.organizationId,
-              input.id,
-              input.status,
-            );
+      )
+      .run(
+        input.status,
+        input.status,
+        timestamp,
+        input.status,
+        input.errorMessage ?? null,
+        input.status,
+        input.retryAt ?? null,
+        input.status,
+        input.retryAt ?? null,
+        timestamp,
+        this.organizationId,
+        input.id,
+        input.status,
+        input.claimedAt ?? null,
+        input.attemptNumber ?? null,
+        input.status,
+      );
     return Number(result.changes) === 1;
   }
 }

@@ -112,5 +112,51 @@ services:
         max-size: 10m
         max-file: "3"
 
+  request-worker:
+    image: opencoi:local
+    profiles: ["requests"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    command:
+      - node
+      - --enable-source-maps
+      - dist/server/cli/run-certificate-requests.js
+      - --watch
+    environment:
+      NODE_ENV: production
+      PORT: 4174
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:-0}"
+      APP_ORIGIN: "${OPENCOI_APP_ORIGIN:-http://localhost:4174}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      DATA_DIR: /app/data
+      DATABASE_PATH: /app/data/opencoi.sqlite
+      UPLOAD_DIR: /app/data/uploads
+      TOKEN_PEPPER: "${TOKEN_PEPPER:-}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_SECURE: "${SMTP_SECURE:-false}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-OpenCOI <no-reply@localhost>}"
+    volumes:
+      - opencoi-data:/app/data
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    depends_on:
+      opencoi:
+        condition: service_healthy
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
 volumes:
   opencoi-data:

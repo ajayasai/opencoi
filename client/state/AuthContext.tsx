@@ -5,7 +5,7 @@ import type { SessionUser } from "../types";
 interface AuthContextValue {
   user: SessionUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  login: (email: string, password: string, organizationSlug?: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -29,8 +29,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refresh().finally(() => setLoading(false));
   }, [refresh]);
 
-  const login = async (email: string, password: string) => {
-    setUser(await api.login(email, password));
+  const login = async (email: string, password: string, organizationSlug?: string) => {
+    setUser(await api.login(email, password, organizationSlug));
   };
 
   const logout = async () => {

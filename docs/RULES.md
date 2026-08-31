@@ -79,7 +79,7 @@ It does not combine arbitrary duplicate policy rows to manufacture a successful 
 
 ## Required policy fields
 
-The v0.2 application requires insurer name and policy number for configured coverage rows. A present value must be human-confirmed to pass.
+The v0.3 application requires insurer name and policy number for configured coverage rows. A present value must be human-confirmed to pass.
 
 - Missing from unconfirmed extraction → `UNKNOWN`.
 - Present but unconfirmed → `UNKNOWN`.
@@ -117,7 +117,7 @@ Configured limit checks use exact `greater than or equal` comparisons in minor u
 - Confirmed below the minimum → `LIMIT_INADEQUATE` / `FAIL`.
 - Confirmed at or above the minimum → `LIMIT_SATISFIES` / `PASS`.
 
-The underlying rule engine supports explicitly configured umbrella stacking with a confirmed active-through umbrella row. It is disabled by default, and the v0.2 requirements UI and server-generated profiles do not enable it. OpenCOI therefore does not silently add primary and umbrella limits.
+The underlying rule engine supports explicitly configured umbrella stacking with a confirmed active-through umbrella row. It is disabled by default, and the v0.3 requirements UI and server-generated profiles do not enable it. OpenCOI therefore does not silently add primary and umbrella limits.
 
 The engine also refuses an arithmetic result outside JavaScript's safe integer range and returns `UNKNOWN` rather than rounding or overflowing.
 
@@ -133,7 +133,7 @@ A rule identifies an endorsement by a normalized form code, a normalized name, o
 
 This distinction matters: a checked COI box or description is generally `MENTIONED`; it is not silently promoted to an attached or human-verified endorsement. A missing match after confirmed review fails. A proposed but unconfirmed match stays unknown.
 
-The v0.2 intake UI exposes evidence levels for three common items—additional insured, waiver of subrogation, and primary/non-contributory—and lets a reviewer add arbitrary named or form-coded endorsements from the PDF package. `ATTACHED` and `HUMAN_VERIFIED` are explicit reviewer choices; they are never inferred merely because a phrase appears on the certificate. Detailed policy-language interpretation and legal sufficiency review remain outside the evaluator.
+The v0.3 intake UI exposes evidence levels for three common items—additional insured, waiver of subrogation, and primary/non-contributory—and lets a reviewer add arbitrary named or form-coded endorsements from the PDF package. `ATTACHED` and `HUMAN_VERIFIED` are explicit reviewer choices; they are never inferred merely because a phrase appears on the certificate. Detailed policy-language interpretation and legal sufficiency review remain outside the evaluator.
 
 ## Requirement publishing
 
@@ -141,7 +141,7 @@ The requirements editor publishes a numbered profile per vendor type. Publicatio
 
 Each certificate evaluation records the selected version and evaluation date in its extraction context. Its persisted findings retain the decision output. Publishing a later profile does not silently rewrite older findings.
 
-v0.2 does not expose a bulk historical replay or retroactive migration UI. If reproducibility or migration behavior changes, the release notes must describe it.
+v0.3 does not expose a bulk historical replay or retroactive migration UI. If reproducibility or migration behavior changes, the release notes must describe it.
 
 The versioned shared schema is constrained data, not executable customization. Rules cannot contain JavaScript, SQL, shell commands, or arbitrary user-provided regular expressions.
 
@@ -185,9 +185,9 @@ Renewal reminders use printed dates from the latest confirmed document. They nev
 
 Reason codes are intended for explanation and tests. The pre-1.0 API and export schema can still evolve; incompatible changes belong in the changelog.
 
-## v0.2 configuration boundaries
+## v0.3 configuration boundaries
 
-- The v0.2 application UI and configuration API accept only USD profiles and store money in cents, although the reusable shared schema validates general three-letter currency codes. Other currencies require explicit document normalization and mismatch handling before the application can expose them safely.
+- The v0.3 application UI and configuration API accept only USD profiles and store money in cents, although the reusable shared schema validates general three-letter currency codes. Other currencies require explicit document normalization and mismatch handling before the application can expose them safely.
 - The UI exposes common coverage types, each-occurrence/claim and aggregate minimums, expiration horizons, and named endorsement requirements; the shared engine models additional limit types.
 - Umbrella stacking is modeled but disabled in application-generated rules.
 - Contract-, project-, or location-specific requirement assignment is not included.

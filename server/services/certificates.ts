@@ -222,6 +222,7 @@ export interface IngestCertificateInput {
   consumeUploadLink?: boolean;
   forceUnconfirmed?: boolean;
   now?: Date;
+  withinTransaction?: (result: IngestCertificateResult, repository: OrganizationRepository) => void;
 }
 
 export interface IngestCertificateResult {
@@ -295,6 +296,11 @@ export const parseCertificateMetadata = (
   }
   const parsed = certificateMetadataSchema.parse(raw);
   return forceUnconfirmed ? { ...parsed, reviewStatus: "UNCONFIRMED" } : parsed;
+};
+
+const machineProposalSnapshot = (extraction: Record<string, unknown>): Record<string, unknown> => {
+  const { _opencoi: _serverMetadata, ...proposal } = extraction;
+  return proposal;
 };
 
 interface RequirementRow extends Record<string, unknown> {
@@ -592,7 +598,11 @@ const persistEvaluation = (
   certificate: CertificateRow,
   metadata: CertificateMetadata,
   evaluationDate: string,
-): number | null => {
+): {
+  requirementVersion: number | null;
+  evaluationVendorType: { id: string; name: string };
+  evaluatedRuleset: RulesetV1Input | null;
+} => {
   const vendor = repository.getVendor(certificate.vendor_id);
   if (!vendor) throw new Error("Vendor disappeared during certificate evaluation");
   const vendorType = repository.getVendorType(vendor.vendor_type_id);
@@ -617,7 +627,11 @@ const persistEvaluation = (
         ? { confirmedByUserId: certificate.confirmed_by_user_id }
         : {}),
     });
-    return null;
+    return {
+      requirementVersion: null,
+      evaluationVendorType: { id: vendorType.id, name: vendorType.name },
+      evaluatedRuleset: null,
+    };
   }
   const result = evaluateCompliance(
     configured.ruleset,
@@ -665,7 +679,11 @@ const persistEvaluation = (
       : {}),
   });
   void database;
-  return configured.version;
+  return {
+    requirementVersion: configured.version,
+    evaluationVendorType: { id: vendorType.id, name: vendorType.name },
+    evaluatedRuleset: configured.ruleset,
+  };
 };
 
 const booleanEndorsement = (names: readonly string[], pattern: RegExp): boolean | undefined =>
@@ -814,19 +832,24 @@ export const ingestCertificate = async (
         metadata,
         now.toISOString(),
       );
-      const requirementVersion = persistEvaluation(
+      const evaluationContext = persistEvaluation(
         input.database,
         repository,
         certificate,
         metadata,
         evaluationDate,
       );
+      const { requirementVersion } = evaluationContext;
       const extraction = {
         ...metadata,
         reviewStatus: input.forceUnconfirmed ? "UNCONFIRMED" : metadata.reviewStatus,
         _opencoi: {
+          machineProposal:
+            metadata.reviewStatus === "UNCONFIRMED" ? machineProposalSnapshot(metadata) : null,
           evaluationDate,
           requirementVersion,
+          evaluationVendorType: evaluationContext.evaluationVendorType,
+          evaluatedRuleset: evaluationContext.evaluatedRuleset,
           scope: "UPLOADED_DOCUMENT",
         },
       };
@@ -871,12 +894,14 @@ export const ingestCertificate = async (
           at: now.toISOString(),
         });
       }
-      return {
+      const result = {
         certificate: repository.getCertificate(certificate.id) as CertificateRow,
         document: repository.getDocument(document.id) as DocumentRow,
         requirementVersion,
         evaluationDate,
       };
+      input.withinTransaction?.(result, repository);
+      return result;
     });
   } catch (error) {
     await input.documentStore.remove(stored.storageKey);
@@ -932,17 +957,24 @@ export const confirmStoredCertificate = (input: {
       metadata,
       now.toISOString(),
     );
-    const requirementVersion = persistEvaluation(
+    const evaluationContext = persistEvaluation(
       input.database,
       repository,
       certificate,
       metadata,
       evaluationDate,
     );
+    const { requirementVersion } = evaluationContext;
     const previousOpenCoi =
       storedExtraction._opencoi && typeof storedExtraction._opencoi === "object"
         ? (storedExtraction._opencoi as Record<string, unknown>)
         : {};
+    const immutableMachineProposal =
+      previousOpenCoi.machineProposal &&
+      typeof previousOpenCoi.machineProposal === "object" &&
+      !Array.isArray(previousOpenCoi.machineProposal)
+        ? previousOpenCoi.machineProposal
+        : machineProposalSnapshot(storedExtraction);
     repository.updateDocumentProcessing(document.id, {
       status: "confirmed",
       extraction: {
@@ -955,8 +987,11 @@ export const confirmStoredCertificate = (input: {
         reviewStatus: "CONFIRMED",
         _opencoi: {
           ...previousOpenCoi,
+          machineProposal: immutableMachineProposal,
           evaluationDate,
           requirementVersion,
+          evaluationVendorType: evaluationContext.evaluationVendorType,
+          evaluatedRuleset: evaluationContext.evaluatedRuleset,
           scope: "UPLOADED_DOCUMENT",
           confirmation: {
             status: "CONFIRMED",

@@ -23,6 +23,7 @@ export function LoginPage() {
   const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [organizationSlug, setOrganizationSlug] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [ssoSubmitting, setSsoSubmitting] = useState(false);
@@ -61,7 +62,7 @@ export function LoginPage() {
     setError("");
     setSubmitting(true);
     try {
-      await login(email.trim(), password);
+      await login(email.trim(), password, organizationSlug.trim() || undefined);
       const destination = (location.state as { from?: { pathname?: string } } | null)?.from
         ?.pathname;
       navigate(destination || "/", { replace: true });
@@ -190,6 +191,19 @@ export function LoginPage() {
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
               </span>
+            </Field>
+            <Field
+              label="Workspace slug"
+              hint="Optional unless the same email is active in more than one workspace."
+            >
+              <TextInput
+                name="organization"
+                autoComplete="organization"
+                value={organizationSlug}
+                onChange={(event) => setOrganizationSlug(event.target.value.toLowerCase())}
+                pattern="[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?"
+                placeholder="acme-general-contractors"
+              />
             </Field>
             <Button type="submit" size="lg" loading={submitting}>
               Sign in

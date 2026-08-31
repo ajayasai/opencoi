@@ -362,11 +362,12 @@ const eventForDelivery = (row: ClaimedDeliveryRow): DomainEvent =>
     occurred_at: row.event_occurred_at,
   });
 
-const claimDeliveries = (
-  database: OpenCoiDatabase,
-  now: Date,
-  limit: number,
-): { rows: ClaimedDeliveryRow[]; recoveredDeadLettered: number } => {
+interface DeliveryCandidate {
+  id: string;
+  organization_id: string;
+}
+
+const recoverStaleDeliveries = (database: OpenCoiDatabase, now: Date): number => {
   const at = now.toISOString();
   const staleBefore = new Date(now.getTime() - STALE_CLAIM_MS).toISOString();
   database.exec("BEGIN IMMEDIATE");
@@ -389,48 +390,127 @@ const claimDeliveries = (
          WHERE status = 'processing' AND claimed_at < ?`,
       )
       .run(MAX_ATTEMPTS, at, at, staleBefore);
-    const due = database
-      .prepare(
-        `SELECT d.id FROM webhook_deliveries d
-         JOIN webhook_endpoints w
-           ON w.organization_id = d.organization_id AND w.id = d.endpoint_id
-         WHERE d.status IN ('pending', 'failed') AND d.next_attempt_at <= ?
-           AND d.attempt_count < ? AND w.status = 'active'
-         ORDER BY d.next_attempt_at, d.created_at, d.id LIMIT ?`,
-      )
-      .all(at, MAX_ATTEMPTS, Math.min(Math.max(limit, 1), 100)) as Array<{ id: string }>;
-    const claimToken = randomUUID();
-    const claim = database.prepare(
-      `UPDATE webhook_deliveries
-       SET status = 'processing', attempt_count = attempt_count + 1,
-           claim_token = ?, claimed_at = ?, updated_at = ?
-       WHERE id = ? AND status IN ('pending', 'failed')`,
-    );
-    for (const row of due) claim.run(claimToken, at, at, row.id);
-    const rows = database
-      .prepare(
-        `SELECT d.*, w.url AS endpoint_url,
-                w.signing_secret_ciphertext AS signing_secret_ciphertext,
-                e.sequence_number AS event_sequence_number, e.type AS event_type,
-                e.resource_type AS event_resource_type, e.resource_id AS event_resource_id,
-                e.payload_json AS event_payload_json, e.actor_type AS event_actor_type,
-                e.actor_id AS event_actor_id, e.occurred_at AS event_occurred_at
-         FROM webhook_deliveries d
-         JOIN webhook_endpoints w
-           ON w.organization_id = d.organization_id AND w.id = d.endpoint_id
-         JOIN domain_events e
-           ON e.organization_id = d.organization_id AND e.id = d.event_id
-         WHERE d.claim_token = ? AND d.status = 'processing' AND w.status = 'active'
-         ORDER BY d.created_at, d.id`,
-      )
-      .all(claimToken) as unknown as ClaimedDeliveryRow[];
     database.exec("COMMIT");
-    return { rows, recoveredDeadLettered };
+    return recoveredDeadLettered;
   } catch (error) {
     if (database.isTransaction) database.exec("ROLLBACK");
     throw error;
   }
 };
+
+const dueDeliveryCandidates = (
+  database: OpenCoiDatabase,
+  now: Date,
+  limit: number,
+): DeliveryCandidate[] =>
+  database
+    .prepare(
+      `SELECT d.organization_id, d.id FROM webhook_deliveries d
+       JOIN webhook_endpoints w
+         ON w.organization_id = d.organization_id AND w.id = d.endpoint_id
+       WHERE d.status IN ('pending', 'failed') AND d.next_attempt_at <= ?
+         AND d.attempt_count < ? AND w.status = 'active'
+       ORDER BY d.next_attempt_at, d.created_at, d.id LIMIT ?`,
+    )
+    .all(
+      now.toISOString(),
+      MAX_ATTEMPTS,
+      Math.min(Math.max(limit, 1), 100),
+    ) as unknown as DeliveryCandidate[];
+
+/**
+ * Lease exactly one due row immediately before its network attempt. Candidate
+ * discovery deliberately does not reserve work, so a slow delivery cannot
+ * make the rest of a batch appear stale to another worker.
+ */
+const claimDelivery = (
+  database: OpenCoiDatabase,
+  candidate: DeliveryCandidate,
+  now: Date,
+): ClaimedDeliveryRow | null => {
+  const at = now.toISOString();
+  const claimToken = randomUUID();
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    const changed = database
+      .prepare(
+        `UPDATE webhook_deliveries
+         SET status = 'processing', attempt_count = attempt_count + 1,
+             claim_token = ?, claimed_at = ?, updated_at = ?
+         WHERE organization_id = ? AND id = ?
+           AND status IN ('pending', 'failed') AND next_attempt_at <= ?
+           AND attempt_count < ?
+           AND EXISTS (
+             SELECT 1 FROM webhook_endpoints w
+             WHERE w.organization_id = webhook_deliveries.organization_id
+               AND w.id = webhook_deliveries.endpoint_id AND w.status = 'active'
+           )`,
+      )
+      .run(claimToken, at, at, candidate.organization_id, candidate.id, at, MAX_ATTEMPTS);
+    const row =
+      Number(changed.changes) === 1
+        ? (database
+            .prepare(
+              `SELECT d.*, w.url AS endpoint_url,
+                      w.signing_secret_ciphertext AS signing_secret_ciphertext,
+                      e.sequence_number AS event_sequence_number, e.type AS event_type,
+                      e.resource_type AS event_resource_type, e.resource_id AS event_resource_id,
+                      e.payload_json AS event_payload_json, e.actor_type AS event_actor_type,
+                      e.actor_id AS event_actor_id, e.occurred_at AS event_occurred_at
+               FROM webhook_deliveries d
+               JOIN webhook_endpoints w
+                 ON w.organization_id = d.organization_id AND w.id = d.endpoint_id
+               JOIN domain_events e
+                 ON e.organization_id = d.organization_id AND e.id = d.event_id
+               WHERE d.organization_id = ? AND d.id = ? AND d.claim_token = ?
+                 AND d.status = 'processing' AND w.status = 'active'`,
+            )
+            .get(candidate.organization_id, candidate.id, claimToken) as
+            | ClaimedDeliveryRow
+            | undefined)
+        : undefined;
+    if (Number(changed.changes) === 1 && !row) {
+      throw new Error("Claimed webhook delivery could not be loaded");
+    }
+    database.exec("COMMIT");
+    return row ?? null;
+  } catch (error) {
+    if (database.isTransaction) database.exec("ROLLBACK");
+    throw error;
+  }
+};
+
+const webhookEndpointIsActive = (
+  database: OpenCoiDatabase,
+  organizationId: string,
+  endpointId: string,
+): boolean =>
+  Boolean(
+    database
+      .prepare(
+        `SELECT 1 FROM webhook_endpoints
+         WHERE organization_id = ? AND id = ? AND status = 'active'`,
+      )
+      .get(organizationId, endpointId),
+  );
+
+const releaseDisabledClaim = (
+  database: OpenCoiDatabase,
+  row: ClaimedDeliveryRow,
+  now: Date,
+): boolean =>
+  Number(
+    database
+      .prepare(
+        `UPDATE webhook_deliveries
+         SET status = CASE WHEN attempt_count > 1 THEN 'failed' ELSE 'pending' END,
+             attempt_count = max(attempt_count - 1, 0),
+             claim_token = NULL, claimed_at = NULL, updated_at = ?
+         WHERE organization_id = ? AND id = ? AND status = 'processing'
+           AND claim_token = ?`,
+      )
+      .run(now.toISOString(), row.organization_id, row.id, row.claim_token).changes,
+  ) === 1;
 
 export const postWebhook = async (
   target: PublicWebhookTarget,
@@ -558,20 +638,29 @@ export const runWebhookDeliveryBatch = async (
   options: {
     limit?: number;
     now?: Date;
+    clock?: () => Date;
     timeoutMs?: number;
     resolveTarget?: typeof resolvePublicWebhookTarget;
     deliver?: typeof postWebhook;
   } = {},
 ): Promise<{ claimed: number; succeeded: number; failed: number; deadLettered: number }> => {
-  const now = options.now ?? new Date();
+  const clock =
+    options.clock ?? (options.now ? () => new Date(options.now?.getTime() ?? 0) : () => new Date());
+  const batchStartedAt = clock();
   const timeoutMs = validatedTimeout(options.timeoutMs);
-  const claim = claimDeliveries(database, now, options.limit ?? 20);
-  const { rows } = claim;
+  const recoveredDeadLettered = recoverStaleDeliveries(database, batchStartedAt);
+  const candidates = dueDeliveryCandidates(database, batchStartedAt, options.limit ?? 20);
+  let claimed = 0;
   let succeeded = 0;
   let failed = 0;
-  let deadLettered = claim.recoveredDeadLettered;
-  for (const row of rows) {
+  let deadLettered = recoveredDeadLettered;
+  for (const candidate of candidates) {
+    const attemptAt = clock();
+    const row = claimDelivery(database, candidate, attemptAt);
+    if (!row) continue;
+    claimed += 1;
     let result: WebhookHttpResult;
+    let disabledBeforeSend = false;
     const startedAt = Date.now();
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), timeoutMs);
@@ -585,15 +674,28 @@ export const runWebhookDeliveryBatch = async (
         (options.resolveTarget ?? resolvePublicWebhookTarget)(row.endpoint_url),
         controller.signal,
       );
-      const remainingMs = timeoutMs - (Date.now() - startedAt);
-      if (remainingMs < 1) throw new Error("Webhook attempt exceeded its deadline");
-      result = await abortable(
-        (options.deliver ?? postWebhook)(target, eventForDelivery(row), secret, {
-          timeoutMs: remainingMs,
-          signal: controller.signal,
-        }),
-        controller.signal,
-      );
+      // Endpoint administration can race with DNS resolution. Recheck after
+      // resolving and immediately before the first external side effect.
+      if (!webhookEndpointIsActive(database, row.organization_id, row.endpoint_id)) {
+        disabledBeforeSend = true;
+        result = {
+          ok: false,
+          status: null,
+          bodyExcerpt: "",
+          error: "Webhook endpoint was disabled before delivery",
+        };
+      } else {
+        const remainingMs = timeoutMs - (Date.now() - startedAt);
+        if (remainingMs < 1) throw new Error("Webhook attempt exceeded its deadline");
+        result = await abortable(
+          (options.deliver ?? postWebhook)(target, eventForDelivery(row), secret, {
+            timeoutMs: remainingMs,
+            now: attemptAt,
+            signal: controller.signal,
+          }),
+          controller.signal,
+        );
+      }
     } catch (error) {
       result = {
         ok: false,
@@ -604,10 +706,14 @@ export const runWebhookDeliveryBatch = async (
     } finally {
       clearTimeout(deadline);
     }
-    const at = now.toISOString();
+    const completedAt = clock();
+    if (disabledBeforeSend) {
+      if (releaseDisabledClaim(database, row, completedAt)) claimed -= 1;
+      continue;
+    }
+    const at = completedAt.toISOString();
     if (result.ok) {
-      succeeded += 1;
-      database
+      const changed = database
         .prepare(
           `UPDATE webhook_deliveries
            SET status = 'succeeded', claim_token = NULL, claimed_at = NULL,
@@ -624,12 +730,11 @@ export const runWebhookDeliveryBatch = async (
           row.id,
           row.claim_token,
         );
+      if (Number(changed.changes) === 1) succeeded += 1;
       continue;
     }
     const isDeadLetter = row.attempt_count >= MAX_ATTEMPTS;
-    if (isDeadLetter) deadLettered += 1;
-    else failed += 1;
-    database
+    const changed = database
       .prepare(
         `UPDATE webhook_deliveries
          SET status = ?, claim_token = NULL, claimed_at = NULL, response_status = ?,
@@ -641,12 +746,16 @@ export const runWebhookDeliveryBatch = async (
         result.status,
         result.bodyExcerpt,
         result.error?.slice(0, 2_000) ?? "Webhook delivery failed",
-        retryAt(now, row.attempt_count),
+        retryAt(completedAt, row.attempt_count),
         at,
         row.organization_id,
         row.id,
         row.claim_token,
       );
+    if (Number(changed.changes) === 1) {
+      if (isDeadLetter) deadLettered += 1;
+      else failed += 1;
+    }
   }
-  return { claimed: rows.length, succeeded, failed, deadLettered };
+  return { claimed, succeeded, failed, deadLettered };
 };
