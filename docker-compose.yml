@@ -1,0 +1,68 @@
+name: opencoi
+
+services:
+  opencoi:
+    image: opencoi:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    ports:
+      - "${OPENCOI_BIND_ADDRESS:-127.0.0.1}:${OPENCOI_PORT:-4174}:4174"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 4174
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:-0}"
+      APP_ORIGIN: "${OPENCOI_APP_ORIGIN:-http://localhost:4174}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      DATA_DIR: /app/data
+      DATABASE_PATH: /app/data/opencoi.sqlite
+      UPLOAD_DIR: /app/data/uploads
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-15}"
+      SESSION_TTL_HOURS: "${SESSION_TTL_HOURS:-12}"
+      UPLOAD_LINK_TTL_DAYS: "${UPLOAD_LINK_TTL_DAYS:-14}"
+      TOKEN_PEPPER: "${TOKEN_PEPPER:-}"
+      BOOTSTRAP_ORG_NAME: "${BOOTSTRAP_ORG_NAME:-}"
+      BOOTSTRAP_ORG_SLUG: "${BOOTSTRAP_ORG_SLUG:-}"
+      BOOTSTRAP_ADMIN_NAME: "${BOOTSTRAP_ADMIN_NAME:-}"
+      BOOTSTRAP_ADMIN_EMAIL: "${BOOTSTRAP_ADMIN_EMAIL:-}"
+      BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-587}"
+      SMTP_SECURE: "${SMTP_SECURE:-false}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASSWORD: "${SMTP_PASSWORD:-}"
+      SMTP_FROM: "${SMTP_FROM:-OpenCOI <no-reply@localhost>}"
+      REMINDERS_ENABLED: "${REMINDERS_ENABLED:-true}"
+      REMINDER_POLL_MINUTES: "${REMINDER_POLL_MINUTES:-360}"
+    volumes:
+      - opencoi-data:/app/data
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4174/api/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  opencoi-data:

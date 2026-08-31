@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>OpenCOI</title>
+  <rect width="64" height="64" rx="16" fill="#153e35"/>
+  <path d="M19 18h20l7 7v21H19z" fill="#f7f8f4"/>
+  <path d="M39 18v8h7" fill="none" stroke="#153e35" stroke-width="3"/>
+  <path d="M25 34l5 5 10-12" fill="none" stroke="#e4a853" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

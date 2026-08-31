@@ -1,0 +1,83 @@
+name: Bug report
+description: Report a reproducible problem in OpenCOI.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve OpenCOI. Do not attach real certificates, policy numbers, credentials, access tokens, or other personal or confidential data. Use synthetic or fully redacted examples.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues for this problem.
+          required: true
+        - label: I removed secrets, personal data, and confidential insurance information.
+          required: true
+        - label: This is not a security vulnerability; I will follow SECURITY.md for private reporting if it is.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: OpenCOI version or commit
+      placeholder: v0.1.0 or a full commit SHA
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment method
+      options:
+        - Docker Compose
+        - Node.js directly
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and its impact.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Configure ...
+        2. Open ...
+        3. Select ...
+        4. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: Include operating system, browser, Node/Docker version, and relevant non-secret configuration.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs or screenshots
+      description: Paste only the smallest useful, fully redacted excerpt.
+      render: shell

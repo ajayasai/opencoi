@@ -1,0 +1,79 @@
+{
+  "name": "opencoi",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Explainable, self-hosted certificate of insurance tracking.",
+  "license": "AGPL-3.0-only",
+  "author": "Ajaya Sai",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ajayasai/opencoi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ajayasai/opencoi/issues"
+  },
+  "homepage": "https://github.com/ajayasai/opencoi#readme",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,magenta \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "tsx watch server/index.ts",
+    "dev:web": "vite",
+    "build": "npm run build:web && npm run build:api",
+    "build:web": "vite build",
+    "build:api": "tsc -p tsconfig.server.json",
+    "start": "node --enable-source-maps dist/server/index.js",
+    "check": "npm run typecheck && npm run lint && npm run test:run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "licenses:audit": "node scripts/audit-runtime-licenses.mjs",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "db:seed": "tsx server/cli/seed.ts",
+    "reminders:run": "tsx server/cli/run-reminders.ts"
+  },
+  "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "compression": "^1.8.1",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "helmet": "^8.1.0",
+    "lucide-react": "^1.37.0",
+    "multer": "^2.0.2",
+    "nodemailer": "^9.0.6",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.9.1",
+    "tesseract.js": "^6.0.1",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.4",
+    "@testing-library/jest-dom": "^6.8.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/compression": "^1.8.1",
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.5.2",
+    "@types/nodemailer": "^7.0.1",
+    "@types/react": "^19.1.16",
+    "@types/react-dom": "^19.1.9",
+    "@types/supertest": "^6.0.3",
+    "@vitejs/plugin-react": "^5.0.2",
+    "@vitest/coverage-v8": "^4.1.11",
+    "concurrently": "^9.2.1",
+    "jsdom": "^27.0.0",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vite-plugin-static-copy": "^4.1.1",
+    "vitest": "^4.1.11"
+  }
+}

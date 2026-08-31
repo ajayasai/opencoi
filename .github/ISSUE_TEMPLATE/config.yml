@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Privately report a security vulnerability
+    url: https://github.com/ajayasai/opencoi/security/advisories/new
+    about: Do not disclose exploitable details or sensitive data in a public issue.

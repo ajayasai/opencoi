@@ -1,0 +1,64 @@
+name: Feature request
+description: Propose an improvement to OpenCOI.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        OpenCOI verifies uploaded documents against configured rules. Please do not propose language that implies insurer-side policy-status verification unless the proposal also includes a reliable, auditable source of that status.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and the roadmap for a similar request.
+          required: true
+        - label: I have not included real certificate data, credentials, or other confidential information.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: Describe the user, workflow, and current pain point rather than only a preferred implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed outcome
+      description: Explain the expected behavior, including audit or explainability needs.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+
+  - type: textarea
+    id: risks
+    attributes:
+      label: Security, privacy, and compliance considerations
+      description: Note any effect on authorization, document retention, exports, OCR, reminders, or audit history.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Primary area
+      options:
+        - Vendor management
+        - Coverage requirements and rules
+        - COI upload and OCR
+        - Review and exceptions
+        - Renewals and notifications
+        - Reporting and exports
+        - Security and administration
+        - Deployment and operations
+        - Other
+    validations:
+      required: true
