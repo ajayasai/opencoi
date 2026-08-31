@@ -12,6 +12,65 @@ export interface SessionUser {
   csrfToken: string;
 }
 
+export interface OidcStatus {
+  enabled: boolean;
+  displayName: string | null;
+  organizationName: string | null;
+}
+
+export type ServiceAccountScope =
+  | "vendors:read"
+  | "vendors:write"
+  | "requirements:read"
+  | "compliance:read"
+  | "events:read";
+
+export interface ServiceAccountRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  scopes: ServiceAccountScope[];
+  status: "active" | "disabled";
+  lastUsedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  secrets: Array<{
+    id: string;
+    tokenPrefix: string;
+    expiresAt: string | null;
+    lastUsedAt: string | null;
+    revokedAt: string | null;
+    createdAt: string;
+  }>;
+}
+
+export interface WebhookEndpointRecord {
+  id: string;
+  url: string;
+  description: string | null;
+  eventTypes: string[];
+  status: "active" | "disabled";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface WebhookDeliveryRecord {
+  id: string;
+  endpointId: string;
+  endpointUrl: string;
+  eventId: string;
+  eventType: string;
+  status: "pending" | "processing" | "succeeded" | "failed" | "dead_letter";
+  attemptCount: number;
+  nextAttemptAt: string;
+  responseStatus: number | null;
+  responseBodyExcerpt: string | null;
+  errorMessage: string | null;
+  deliveredAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type DocumentCheckStatus =
   | "meets"
   | "deficient"
@@ -167,6 +226,18 @@ export interface CertificateRecord {
     reason?: string;
     reviewedAt?: string;
   } | null;
+  evidence?: Array<{
+    field: string;
+    extractedValue: string | number;
+    policyIndex: number | null;
+    endorsementIndex: number | null;
+    limitType: string | null;
+    confidenceBps: number | null;
+    rawText: string;
+    page: number;
+    origin: "client_submitted_extraction";
+    attestationStatus: "unverified" | "reviewer_attested";
+  }>;
   policies: PolicyRecord[];
   findings: FindingRecord[];
 }

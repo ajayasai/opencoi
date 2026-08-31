@@ -17,6 +17,11 @@ jobs:
     name: Verify and build release assets
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
     env:
       TAG_NAME: ${{ github.ref_name }}
 
@@ -52,6 +57,9 @@ jobs:
 
       - name: Audit runtime license coverage
         run: npm run licenses:audit
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
 
       - name: Verify source
         run: npm run check
@@ -97,6 +105,14 @@ jobs:
             sha256sum "${archive_root}.tar.gz" "${archive_root}.cdx.json" > SHA256SUMS
           )
 
+      - name: Attest release assets
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            release/*.tar.gz
+            release/*.cdx.json
+            release/SHA256SUMS
+
       - name: Retain workflow artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -125,6 +141,10 @@ jobs:
         with:
           name: opencoi-${{ github.ref_name }}
           path: release
+
+      - name: Verify release asset checksums
+        shell: bash
+        run: cd release && sha256sum -c SHA256SUMS
 
       - name: Publish GitHub release
         env:

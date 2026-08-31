@@ -10,6 +10,14 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    include: [
+      "client/**/*.test.{ts,tsx}",
+      "server/**/*.test.ts",
+      "shared/**/*.test.ts",
+      "benchmark/**/*.test.ts",
+      "research/**/*.test.ts",
+    ],
+    exclude: ["dist/**", "node_modules/**"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html", "lcov"],

@@ -26,6 +26,7 @@ import {
   Modal,
   PageLoader,
   StatusBadge,
+  Textarea,
   TextInput,
 } from "../components/ui";
 import { useAuth } from "../state/AuthContext";
@@ -115,8 +116,7 @@ function ExceptionModal({
           label="Business rationale"
           hint="Explain why the organization should accept this specific risk temporarily."
         >
-          <textarea
-            className="input"
+          <Textarea
             value={reason}
             onChange={(event) => setReason(event.target.value)}
             placeholder="At least 10 characters"
@@ -126,11 +126,7 @@ function ExceptionModal({
           label="Compensating controls"
           hint="Optional safeguards, contract terms, or operational restrictions."
         >
-          <textarea
-            className="input"
-            value={controls}
-            onChange={(event) => setControls(event.target.value)}
-          />
+          <Textarea value={controls} onChange={(event) => setControls(event.target.value)} />
         </Field>
         <Field label="Exception expires">
           <TextInput
@@ -623,6 +619,55 @@ export function CertificateDetailPage() {
               <code>{certificate.sha256}</code>
             </div>
           </Card>
+          {(certificate.evidence?.length ?? 0) > 0 && (
+            <Card className="evidence-citations-card">
+              <details>
+                <summary>
+                  <FileCheck2 size={17} /> Page-linked extraction evidence (
+                  {certificate.evidence?.length ?? 0})
+                </summary>
+                <p>
+                  These are client-submitted extraction proposals, normally produced by the browser,
+                  and checked by the server for a matching normalized line in the submitted per-page
+                  text. They are not independent server OCR or proof of PDF contents.{" "}
+                  {isConfirmed
+                    ? "A reviewer attested to the source document; any correction remains separate from these proposals."
+                    : "They remain unverified until a reviewer checks the original PDF."}
+                </p>
+                <ul>
+                  {certificate.evidence?.map((citation) => (
+                    <li
+                      key={`${citation.field}-${citation.policyIndex ?? "document"}-${citation.endorsementIndex ?? "field"}-${citation.limitType ?? "value"}-${citation.page}-${citation.rawText}`}
+                    >
+                      <div>
+                        <strong>
+                          {citation.limitType
+                            ? titleCase(citation.limitType)
+                            : titleCase(citation.field)}
+                        </strong>
+                        {citation.confidenceBps !== null && (
+                          <span>{Math.round(citation.confidenceBps / 100)}% OCR confidence</span>
+                        )}
+                        <span>
+                          {citation.attestationStatus === "reviewer_attested"
+                            ? "Reviewer-attested client citation"
+                            : "Unverified client citation"}
+                        </span>
+                      </div>
+                      <q>{citation.rawText}</q>
+                      <a
+                        href={`/api/certificates/${certificate.id}/view#page=${citation.page}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open original at page {citation.page}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </Card>
+          )}
           <Card className="scope-card">
             <ShieldAlert size={19} />
             <h3>Document scope</h3>
@@ -657,8 +702,7 @@ export function CertificateDetailPage() {
             label="Rejection reason"
             hint="Explain what the vendor should correct before submitting a replacement."
           >
-            <textarea
-              className="input"
+            <Textarea
               value={rejectionReason}
               minLength={10}
               maxLength={5000}

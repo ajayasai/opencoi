@@ -1,6 +1,6 @@
 # Architecture
 
-OpenCOI v0.1 is a deliberately small, single-node application: a React browser client, one Node.js/Express process, SQLite, and local document storage. The design favors inspectable document decisions and operational simplicity over live insurance-system connectivity or horizontal scale.
+OpenCOI v0.2 keeps a deliberately understandable single-node data plane: a React browser client, Node.js/Express, SQLite, and local document storage. It adds a versioned service API and independently runnable webhook worker, while continuing to favor inspectable document decisions and operational simplicity over live insurance-system connectivity or unsupported horizontal-scale claims.
 
 The system's output is always scoped to an uploaded document. No component contacts an insurer, broker, carrier, or agency-management system to establish current policy status.
 
@@ -14,6 +14,8 @@ flowchart LR
     D[(SQLite\nrecords, findings, audit)]
     F[(Filesystem\noriginal PDFs)]
     M[Optional SMTP server]
+    W[Optional webhook worker]
+    H[Public HTTPS webhook targets]
 
     B -->|same-origin JSON, multipart PDF| A
     B -->|parse proposals locally| E
@@ -21,6 +23,9 @@ flowchart LR
     A --> D
     A --> F
     A -->|renewal email only| M
+    A -->|transactional outbox| D
+    W --> D
+    W -->|signed event delivery| H
 ```
 
 In development, Vite serves the browser app on port 5173 and proxies `/api` to Express on port 4174. In production, Express serves the compiled browser assets and API from one origin.
@@ -47,6 +52,7 @@ Vendor-link submissions are forced to `UNCONFIRMED` by the server, regardless of
 - strict Zod schemas for versioned rules;
 - deterministic date, limit, coverage, policy-field, and endorsement evaluation;
 - OCR text normalization and conservative field proposal heuristics; and
+- vendor-neutral benchmark contracts and deterministic fact/citation scoring; and
 - CSV serialization with spreadsheet-formula neutralization.
 
 The evaluator takes all time-sensitive context explicitly, including an ISO evaluation date. It does not read the system clock internally. Given the same canonical document facts, rule version, evaluation date, and engine version, it returns the same base findings.
@@ -58,7 +64,7 @@ The evaluator takes all time-sensitive context explicitly, including an ISO eval
 The `server/` process owns the following boundaries:
 
 - configuration parsing and fail-fast validation;
-- local-password authentication and session lifecycle;
+- local-password and optional OpenID Connect authentication with one shared session lifecycle;
 - organization scoping and role authorization;
 - trusted-origin and CSRF enforcement;
 - a global per-client request ceiling plus stricter login and public-link limits;
@@ -66,15 +72,16 @@ The `server/` process owns the following boundaries:
 - PDF byte-level triage and filesystem storage;
 - canonical server-side evaluation and persisted findings;
 - UI projections such as dashboard and lifecycle status; and
+- tenant-bound scoped service accounts, the `/api/v1` contract, domain events, and integration administration; and
 - scheduled or CLI-triggered reminder cycles.
 
-The JSON API is under `/api`; `/api/health` is unauthenticated for container health checks. Most application endpoints require a session. Mutating authenticated routes additionally require a trusted origin, a matching CSRF header and readable CSRF cookie, and an allowed role. Public upload routes use a high-entropy, expiring, revocable link token and a narrower API surface.
+The browser JSON API is under `/api`; `/api/health` is unauthenticated for container health checks. Most application endpoints require a session. Mutating authenticated routes additionally require a trusted origin, a matching CSRF header and readable CSRF cookie, and an allowed role. Public upload routes use a high-entropy, expiring, revocable link token and a narrower API surface.
 
-The API is not advertised as stable for third-party clients before 1.0. Endpoint or response changes must be called out in release notes.
+Third-party clients use the separately authenticated and versioned `/api/v1` surface. It has cursor pagination, scoped bearer access, Problem Details, request IDs, idempotent writes, and ETag preconditions. Browser endpoints remain an internal application interface. See [API.md](API.md).
 
 ## Persistence model
 
-SQLite stores organizations, users, sessions, vendor types, published requirement snapshots, vendors, upload links, document metadata, certificate facts, policy rows, endorsement evidence, findings, exceptions, reminders, and audit events.
+SQLite stores organizations, users, sessions, short-lived OIDC login transactions and identity bindings, vendor types, published requirement snapshots, vendors, upload links, document metadata, certificate facts, policy rows, endorsement evidence, findings, exceptions, reminders, audit events, service accounts, webhook endpoints, append-only domain events, delivery state, and API idempotency records.
 
 Important storage properties include:
 
@@ -93,7 +100,7 @@ The standard container mounts both at `/app/data`. See [BACKUP_RESTORE.md](BACKU
 
 Publishing a requirement profile creates a numbered JSON snapshot and updates the active projection used for new evaluations. A certificate stores the version and evaluation date used, while its findings preserve the resulting expected and observed values and reason codes.
 
-v0.1 exposes the current profile editor and historical result context, but not an arbitrary replay or migration console. A requirement edit does not silently recompute prior stored findings.
+v0.2 exposes the current profile editor and historical result context, but not an arbitrary replay or migration console. A requirement edit does not silently recompute prior stored findings.
 
 ## Reminder execution
 
@@ -107,16 +114,19 @@ Reminder language says that the date came from a submitted document. A missing r
 
 ## Authentication and authorization
 
-v0.1 uses local accounts. The bootstrap administrator is created only when there are no users.
+The bootstrap administrator is created only when there are no users. Local password sign-in remains available as a break-glass path. Operators can optionally configure one OpenID Connect provider for one explicit organization slug.
 
 - Passwords are salted and hashed with scrypt.
+- OIDC uses Authorization Code with PKCE S256, random state and nonce, exact issuer validation, a ten-minute one-use server-side transaction, and a callback-only `HttpOnly`, `SameSite=Lax` cookie.
+- The first OIDC sign-in binds `(issuer, subject)` only to an already active OpenCOI user with the same verified email. Later sign-ins use that immutable binding; OIDC never creates a user or assigns a role.
+- OpenCOI discards provider tokens after establishing its own session. OIDC and local authentication issue the same strict application session and CSRF cookies.
 - Session and CSRF bearer values have 256 bits of entropy; only digests are stored.
 - Session cookies are `HttpOnly`, `SameSite=Strict`, and `Secure` when configured for HTTPS.
 - A separate readable CSRF cookie must match the `X-CSRF-Token` header and stored digest.
 - Roles are `owner`, `admin`, `reviewer`, and `viewer`; routes enforce the roles permitted for each mutation.
 - Data repositories and direct queries are scoped by organization.
 
-OpenCOI v0.1 does not include SSO, MFA, SCIM, passkeys, or an account-administration UI. Put the service behind appropriate network and identity controls where local accounts are insufficient.
+OpenCOI does not enforce an identity provider's MFA policy and does not include SCIM, passkeys, provider group-to-role mapping, multiple OIDC providers, or an account-administration UI. Test the local break-glass account and provider recovery procedures before depending on SSO.
 
 ## PDF trust boundary
 
@@ -131,9 +141,19 @@ Every uploaded file is untrusted. Before storage, the server:
 
 These are conservative intake checks, not a complete parser sandbox, malware scanner, or content disarm/reconstruction system. Internet-facing operators should isolate the service and add scanning controls based on [THREAT_MODEL.md](THREAT_MODEL.md).
 
+## Integration delivery
+
+An API mutation and its domain event are committed in the same immediate SQLite
+transaction. Matching webhook delivery rows are part of that outbox write.
+Workers atomically lease due rows, sign the exact serialized event body, resolve
+and validate a public HTTPS target, pin the checked IP for the request, and
+record success, retry, or dead-letter state. Delivery is at least once and the
+stable event ID is the receiver's deduplication key. The worker can run as a
+separate process or optional Compose-profile service.
+
 ## Deployment topology and scale
 
-The supported v0.1 topology is one application process or container with one persistent data directory. Do not run multiple OpenCOI replicas against the same SQLite database or document directory.
+The supported bundled v0.2 topology is one application process or container, optional external job workers, and one persistent data directory. Do not run multiple web replicas against the same SQLite database or document directory.
 
 This boundary keeps deployment and backup comprehensible, but it also means:
 
@@ -141,6 +161,14 @@ This boundary keeps deployment and backup comprehensible, but it also means:
 - document and database capacity are limited by the host;
 - in-process rate-limit state is not shared across replicas; and
 - operators must monitor disk, memory, backups, and reminder execution.
+
+The vendor directory no longer performs per-vendor queries: its summary
+projection is one aggregate SQL statement, with a query-count regression and a
+hardware-labelled 100/1,000/10,000-vendor benchmark. The stable integration API
+uses cursor pages capped at 100. Those changes remove a measured hot path; they
+do not demonstrate concurrent write capacity, failover, or horizontal scaling.
+Multi-replica support still requires a transactional server database,
+distributed rate limits and leases, shared object storage, and failover tests.
 
 The Compose service runs without Linux capabilities, as a non-root user, with a read-only root filesystem and an ephemeral size-limited `/tmp`. TLS termination, encrypted durable storage, secrets management, edge abuse protection, malware controls, monitoring, and retention remain operator responsibilities. See [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -154,14 +182,14 @@ The Compose service runs without Linux capabilities, as a non-root user, with a 
 - Server-generated compliance CSV neutralizes attacker-controlled cells before spreadsheet interpretation.
 - Audit verification recomputes the event hash chain and exposes inconsistency; it does not make a compromised host trustworthy.
 
-## Explicit non-goals for v0.1
+## Explicit non-goals for v0.2
 
 - live insurer, carrier, broker, or agency-management-system monitoring;
 - policy cancellation or reinstatement feeds;
 - legal, insurance, underwriting, or claims advice;
 - automatic approval of OCR or ambiguous endorsement language;
 - cloud OCR or generative-AI document interpretation;
-- managed certificate review, SSO, MFA, or enterprise compliance certification;
+- managed certificate review, SCIM, MFA enforcement, or enterprise compliance certification;
 - built-in antivirus/CDR or a guarantee that a hostile PDF is harmless; and
 - horizontal scaling against a shared SQLite volume.
 

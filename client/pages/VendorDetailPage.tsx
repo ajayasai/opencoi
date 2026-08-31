@@ -32,6 +32,7 @@ import {
   PageLoader,
   Select,
   StatusBadge,
+  Textarea,
   TextInput,
 } from "../components/ui";
 import { useAuth } from "../state/AuthContext";
@@ -543,8 +544,7 @@ export function VendorDetailPage() {
               />
             </Field>
             <Field label="Internal notes" className="form-grid__wide">
-              <textarea
-                className="input"
+              <Textarea
                 value={editForm.notes}
                 onChange={(event) => updateEditForm("notes", event.target.value)}
                 placeholder="Visible only to workspace users"
@@ -566,8 +566,7 @@ export function VendorDetailPage() {
           <div className="share-link">
             <Field label="Secure upload URL" hint={`Expires ${formatDate(createdLink.expiresAt)}`}>
               <div className="copy-field">
-                <input
-                  className="input"
+                <TextInput
                   readOnly
                   value={new URL(createdLink.url, window.location.origin).toString()}
                   onFocus={(event) => event.currentTarget.select()}

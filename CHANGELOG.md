@@ -8,6 +8,41 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 
 - Follow the evidence-driven priorities in the [roadmap](ROADMAP.md); entries here are not delivery commitments.
 
+## [0.2.0] - 2026-08-31
+
+### Added
+
+- Optional tenant-bound OpenID Connect sign-in using Authorization Code, PKCE S256, state, nonce, verified pre-provisioned-user binding, one-use login transactions, and the existing strict application sessions.
+- Page-aware OCR proposals for named insured, certificate holder, policy fields, exact limits, and endorsements, with the original line, page, confidence, immutable proposal, and manual-correction distinction exposed to reviewers.
+- Authenticated inline PDF view links that open the original at a cited evidence page.
+- Vendor-neutral extraction corpus, prediction, score, and comparison schemas; six original CC0 synthetic page-text cases; deterministic fact, warning, exact-document, and citation scoring; published results/failure cases; and benchmark CI.
+- Tenant-bound, scoped service accounts with one-time tokens, digest-only storage, overlapping rotation, revocation, disabling, and an administrator UI.
+- Stable `/api/v1` endpoints for vendors, requirements, uploaded-document compliance, and ordered events with OpenAPI 3.1, Problem Details, request IDs, cursor pagination, idempotent writes, and ETag preconditions.
+- Transactional domain-event outbox and Standard Webhooks-compatible signed delivery with encrypted signing secrets, public-HTTPS and DNS-rebinding controls, bounded retries, dead letters, explicit replay, and an external worker/Compose profile.
+- Shared form accessibility contracts for labels/descriptions/errors, skip-to-content and route focus, keyboard account menu, and focus-managed inert mobile navigation with regression tests.
+- Preregistered, privacy-safe usability study kit with eight synthetic tasks, consent/moderator materials, a strict no-free-text data dictionary, deterministic analyzer, synthetic fixture, and explicit no-participant-results status.
+- Hardware-labelled 100/1,000/10,000-vendor workload and a query-count regression for the vendor-summary projection.
+
+### Changed
+
+- Replaced per-vendor summary query growth with one aggregate SQL projection while preserving document-check, lifecycle, exception, and reminder semantics.
+- Capped every machine-detected endorsement at `MENTIONED`; an “attached” or human-verified level now requires a person to supply that evidence.
+
+### Security
+
+- Encrypted webhook signing secrets with AES-256-GCM and tenant/record-bound authenticated context.
+- Restricted webhook delivery to public HTTPS, rejects mixed private/public DNS answers and URL credentials, pins a validated address for each attempt, follows no redirects, and limits time and response size.
+- Kept machine credentials separate from browser sessions and derived organization context only from the authenticated service-account record.
+- Pinned the container base by digest and added release dependency/license gates,
+  checksummed archives and SBOMs, post-transfer checksum verification, signed
+  build-provenance attestations, and a production-bundle guard.
+
+### Evidence boundaries
+
+- Published OpenCOI's synthetic text-parser score, not a browser OCR or real-world score. Commercial comparator rows remain explicitly “not tested” until an authorized identical run exists.
+- Published a usability protocol and synthetic analyzer tests, not participant results. No ease-of-use or time-saved claim is made.
+- The 10k-vendor result is hardware-specific, document-free, and single-process; the bundled deployment is still not horizontally scalable.
+
 ## [0.1.2] - 2026-08-31
 
 ### Security
@@ -60,7 +95,8 @@ All notable changes to OpenCOI are documented here. The format follows [Keep a C
 - PDF triage is not antivirus or content disarm/reconstruction. Internet-facing operators should add controls appropriate to their threat model.
 - Local accounts are included; SSO, MFA, and managed identity provisioning are not.
 
-[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/ajayasai/opencoi/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ajayasai/opencoi/compare/v0.1.2...v0.2.0
 [0.1.2]: https://github.com/ajayasai/opencoi/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/ajayasai/opencoi/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ajayasai/opencoi/releases/tag/v0.1.0

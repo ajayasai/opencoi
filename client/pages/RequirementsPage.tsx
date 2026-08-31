@@ -11,6 +11,7 @@ import {
   Modal,
   PageLoader,
   Select,
+  Textarea,
   TextInput,
 } from "../components/ui";
 import { useAuth } from "../state/AuthContext";
@@ -436,7 +437,7 @@ export function RequirementsPage() {
                             />
                           </div>
                         </Field>
-                        <Field label="Currency" hint="v0.1 compares U.S. dollar limits only">
+                        <Field label="Currency" hint="v0.2 compares U.S. dollar limits only">
                           <Select value="USD" disabled aria-label="Requirement currency">
                             <option value="USD">USD</option>
                           </Select>
@@ -572,8 +573,7 @@ export function RequirementsPage() {
             />
           </Field>
           <Field label="Description" hint="Explain when this profile should be assigned.">
-            <textarea
-              className="input"
+            <Textarea
               value={typeDescription}
               onChange={(event) => setTypeDescription(event.target.value)}
               placeholder="Vendors performing on-site trade work…"

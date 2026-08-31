@@ -1,0 +1,57 @@
+name: Public benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extraction-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Generate public synthetic predictions
+        run: npx tsx benchmark/run-shared.ts benchmark/corpus/synthetic-text-v1.json "$RUNNER_TEMP/predictions.json" v0.2.0
+      - name: Score public synthetic predictions
+        run: npx tsx benchmark/score.ts benchmark/corpus/synthetic-text-v1.json "$RUNNER_TEMP/predictions.json" "$RUNNER_TEMP/score.json"
+      - name: Verify frozen public baseline
+        run: |
+          node -e "const fs=require('fs');const expected=JSON.parse(fs.readFileSync('benchmark/results/synthetic-text-v1-opencoi-v0.2.0.score.json'));const actual=JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP+'/score.json'));if(JSON.stringify(actual)!==JSON.stringify(expected)){console.error('Benchmark regression: inspect the committed corpus, prediction diff, and failure cases.');process.exit(1)}"
+      - name: Upload machine-readable outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: extraction-benchmark
+          path: |
+            ${{ runner.temp }}/predictions.json
+            ${{ runner.temp }}/score.json
+
+  scale-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Run hardware-labelled 10k vendor workload
+        run: npm run benchmark:scale -- --output "$RUNNER_TEMP/scale.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scale-benchmark
+          path: ${{ runner.temp }}/scale.json

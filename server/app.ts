@@ -4,10 +4,14 @@ import compression from "compression";
 import express, { type Express } from "express";
 import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
+import { type OidcProtocol, OpenIdClientProtocol } from "./auth/oidc.js";
 import type { AppConfig } from "./config.js";
 import type { OpenCoiDatabase } from "./db.js";
+import { apiV1RequestMetadata, createApiV1Router } from "./http/apiV1.js";
 import { errorHandler, HttpError, notFound } from "./http/errors.js";
+import { createIntegrationAdminRouter } from "./http/integrationAdminRoutes.js";
 import { createApiRouter } from "./http/routes.js";
+import { ensureIntegrationSchema } from "./services/integrationSchema.js";
 import { ensureApiSchema } from "./services/schema.js";
 import type { DocumentStore } from "./storage.js";
 
@@ -17,10 +21,12 @@ export interface CreateAppOptions {
   documentStore: DocumentStore;
   now?: () => Date;
   staticDirectory?: string | false;
+  oidcProtocol?: OidcProtocol;
 }
 
 export const createApp = (options: CreateAppOptions): Express => {
   ensureApiSchema(options.database);
+  ensureIntegrationSchema(options.database);
   const app = express();
   app.disable("x-powered-by");
   // API responses carry authentication and document metadata; do not emit
@@ -51,6 +57,9 @@ export const createApp = (options: CreateAppOptions): Express => {
       crossOriginResourcePolicy: { policy: "same-origin" },
     }),
   );
+  // Establish the stable API response envelope before global middleware can
+  // reject a request (for example, rate limiting or malformed JSON parsing).
+  app.use("/api/v1", apiV1RequestMetadata);
   // Bound application work—including health checks and static-file reads—per
   // client. Sensitive endpoints retain their stricter, purpose-specific limits.
   app.use(
@@ -72,10 +81,26 @@ export const createApp = (options: CreateAppOptions): Express => {
     response.json({
       data: {
         status: database.ok === 1 ? "ok" : "degraded",
-        version: "0.1.2",
+        version: "0.2.0",
       },
     });
   });
+  app.use(
+    "/api/v1",
+    createApiV1Router({
+      config: options.config,
+      database: options.database,
+      now: options.now,
+    }),
+  );
+  app.use(
+    "/api/integrations",
+    createIntegrationAdminRouter({
+      config: options.config,
+      database: options.database,
+      now: options.now,
+    }),
+  );
   app.use(
     "/api",
     createApiRouter({
@@ -83,6 +108,8 @@ export const createApp = (options: CreateAppOptions): Express => {
       database: options.database,
       documentStore: options.documentStore,
       now: options.now,
+      oidcProtocol:
+        options.oidcProtocol ?? (options.config.oidc ? new OpenIdClientProtocol() : undefined),
     }),
   );
   app.use("/api", notFound);

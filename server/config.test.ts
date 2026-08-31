@@ -12,6 +12,7 @@ describe("loadConfig", () => {
     expect(config.trustProxyHops).toBe(0);
     expect(config.bootstrap).toBeNull();
     expect(config.smtp).toBeNull();
+    expect(config.oidc).toBeNull();
   });
 
   it("derives database and upload paths from DATA_DIR", () => {
@@ -42,6 +43,68 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ TRUST_PROXY_HOPS: "-1" })).toThrow(ConfigError);
     expect(() => loadConfig({ TRUST_PROXY_HOPS: "9" })).toThrow(/between 0 and 8/);
     expect(() => loadConfig({ TRUST_PROXY_HOPS: "true" })).toThrow(ConfigError);
+  });
+
+  it("parses a complete tenant-bound OIDC provider", () => {
+    const config = loadConfig({
+      OIDC_ISSUER: "https://identity.example.test/tenant",
+      OIDC_CLIENT_ID: "opencoi-client",
+      OIDC_CLIENT_SECRET: "provider-issued-secret",
+      OIDC_CLIENT_AUTH_METHOD: "client_secret_post",
+      OIDC_ORGANIZATION_SLUG: "organization-a",
+      OIDC_DISPLAY_NAME: "Company SSO",
+      OIDC_TRANSACTION_TTL_MINUTES: "7",
+    });
+
+    expect(config.oidc).toEqual({
+      issuer: "https://identity.example.test/tenant",
+      clientId: "opencoi-client",
+      clientSecret: "provider-issued-secret",
+      clientAuthMethod: "client_secret_post",
+      organizationSlug: "organization-a",
+      displayName: "Company SSO",
+      transactionTtlMs: 7 * 60_000,
+    });
+    expect(
+      loadConfig({
+        OIDC_ISSUER: "https://identity.example.test/tenant/",
+        OIDC_CLIENT_ID: "opencoi-client",
+        OIDC_CLIENT_SECRET: "provider-issued-secret",
+        OIDC_ORGANIZATION_SLUG: "organization-a",
+      }).oidc?.issuer,
+    ).toBe("https://identity.example.test/tenant/");
+  });
+
+  it("rejects partial or insecure OIDC configuration", () => {
+    expect(() => loadConfig({ OIDC_ISSUER: "https://identity.example.test" })).toThrow(
+      /must be provided together/,
+    );
+    const complete = {
+      OIDC_CLIENT_ID: "opencoi-client",
+      OIDC_CLIENT_SECRET: "provider-issued-secret",
+      OIDC_ORGANIZATION_SLUG: "organization-a",
+    };
+    expect(() => loadConfig({ ...complete, OIDC_ISSUER: "http://identity.example.test" })).toThrow(
+      /HTTPS issuer/,
+    );
+    expect(() =>
+      loadConfig({ ...complete, OIDC_ISSUER: "https://identity.example.test?tenant=a" }),
+    ).toThrow(/HTTPS issuer/);
+    expect(() =>
+      loadConfig({
+        ...complete,
+        NODE_ENV: "production",
+        APP_ORIGIN: "https://coi.example.test",
+        OIDC_ISSUER: "http://localhost:5556",
+      }),
+    ).toThrow(/HTTPS issuer/);
+    expect(() =>
+      loadConfig({
+        ...complete,
+        OIDC_ISSUER: "https://identity.example.test",
+        OIDC_CLIENT_AUTH_METHOD: "none",
+      }),
+    ).toThrow(/client_secret_basic/);
   });
 
   it("rejects partial or unsafe production configuration", () => {

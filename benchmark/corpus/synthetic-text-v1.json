@@ -1,0 +1,237 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "opencoi-synthetic-text-v1",
+  "title": "OpenCOI original synthetic page-text benchmark v1",
+  "license": "CC0-1.0",
+  "limitations": [
+    "All cases are synthetic and do not represent the distribution or difficulty of real certificates.",
+    "Pages contain idealized extracted text; this corpus does not execute or measure PDF.js or Tesseract OCR.",
+    "Corpus v1 contains at most one policy per normalized coverage type in a document.",
+    "An endorsement phrase is scored only as MENTIONED; attachment and legal sufficiency require human review.",
+    "Scores from this corpus cannot establish superiority over a commercial or open-source product."
+  ],
+  "cases": [
+    {
+      "id": "single_page_general_liability",
+      "description": "A complete single-page general-liability example with a mentioned endorsement.",
+      "strata": ["ideal-text", "single-page", "general-liability", "endorsement-mention"],
+      "pages": [
+        {
+          "page": 1,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nNAMED INSURED: Example Builders LLC\nCERTIFICATE HOLDER: Example Property Owner\nINSURER A: Example Mutual Insurance 12345\nCOMMERCIAL GENERAL LIABILITY\nPOLICY NUMBER: GL-SYN-001\nPOLICY EFF: 01/01/2026\nPOLICY EXP: 01/01/2027\nEACH OCCURRENCE $1,000,000\nGENERAL AGGREGATE $2,000,000\nPRODUCTS - COMP/OP AGG $2,000,000\nCG 20 10 Additional Insured endorsement attached"
+        }
+      ],
+      "truth": {
+        "namedInsured": { "value": "Example Builders LLC", "evidencePages": [1] },
+        "certificateHolder": { "value": "Example Property Owner", "evidencePages": [1] },
+        "policies": [
+          {
+            "coverageType": { "value": "COMMERCIAL_GENERAL_LIABILITY", "evidencePages": [1] },
+            "insurerName": { "value": "Example Mutual Insurance", "evidencePages": [1] },
+            "policyNumber": { "value": "GL-SYN-001", "evidencePages": [1] },
+            "effectiveDate": { "value": "2026-01-01", "evidencePages": [1] },
+            "expirationDate": { "value": "2027-01-01", "evidencePages": [1] },
+            "limits": {
+              "EACH_OCCURRENCE": { "value": 100000000, "evidencePages": [1] },
+              "GENERAL_AGGREGATE": { "value": 200000000, "evidencePages": [1] },
+              "PRODUCTS_COMPLETED_OPERATIONS_AGGREGATE": {
+                "value": 200000000,
+                "evidencePages": [1]
+              }
+            }
+          }
+        ],
+        "endorsements": [
+          {
+            "name": { "value": "Additional insured", "evidencePages": [1] },
+            "formCode": { "value": "CG 20 10", "evidencePages": [1] },
+            "evidenceLevel": { "value": "MENTIONED", "evidencePages": [1] }
+          }
+        ]
+      },
+      "warningCodes": []
+    },
+    {
+      "id": "multi_page_auto_with_waiver",
+      "description": "An automobile policy whose waiver mention and certificate holder occur on later pages.",
+      "strata": ["ideal-text", "multi-page", "automobile", "endorsement-mention"],
+      "pages": [
+        {
+          "page": 1,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nNAMED INSURED\nExample Delivery Company\nINSURER A: Example Casualty Company 23456\nAUTOMOBILE LIABILITY\nAUTO-TEXT-002 02/01/2026 02/01/2027\nCOMBINED SINGLE LIMIT $1M"
+        },
+        {
+          "page": 2,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nWAIVER OF SUBROGATION endorsement scheduled and attached"
+        },
+        {
+          "page": 3,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nCERTIFICATE HOLDER\nExample Transit Authority"
+        }
+      ],
+      "truth": {
+        "namedInsured": { "value": "Example Delivery Company", "evidencePages": [1] },
+        "certificateHolder": { "value": "Example Transit Authority", "evidencePages": [3] },
+        "policies": [
+          {
+            "coverageType": { "value": "AUTOMOBILE_LIABILITY", "evidencePages": [1] },
+            "insurerName": { "value": "Example Casualty Company", "evidencePages": [1] },
+            "policyNumber": { "value": "AUTO-TEXT-002", "evidencePages": [1] },
+            "effectiveDate": { "value": "2026-02-01", "evidencePages": [1] },
+            "expirationDate": { "value": "2027-02-01", "evidencePages": [1] },
+            "limits": {
+              "COMBINED_SINGLE_LIMIT": { "value": 100000000, "evidencePages": [1] }
+            }
+          }
+        ],
+        "endorsements": [
+          {
+            "name": { "value": "Waiver of subrogation", "evidencePages": [2] },
+            "evidenceLevel": { "value": "MENTIONED", "evidencePages": [2] }
+          }
+        ]
+      },
+      "warningCodes": []
+    },
+    {
+      "id": "two_insurers_two_coverages",
+      "description": "Two coverage rows and two insurers expose the parser's conservative unassigned-insurer behavior.",
+      "strata": ["ideal-text", "multi-page", "multiple-coverages", "multiple-insurers"],
+      "pages": [
+        {
+          "page": 1,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nNAMED INSURED: Example Technology Studio\nINSURER A: Example Alpha Insurance 34567\nCOMMERCIAL GENERAL LIABILITY\nPOLICY NUMBER: GL-MULTI-003\n03/01/2026 03/01/2027\nEACH OCCURRENCE $2,000,000\nGENERAL AGGREGATE $4,000,000"
+        },
+        {
+          "page": 2,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nINSURER B: Example Beta Specialty 45678\nCYBER LIABILITY\nPOLICY NUMBER: CYB-MULTI-003\n04/01/2026 04/01/2027\nEACH CLAIM $3,000,000\nAGGREGATE $6,000,000\nCERTIFICATE HOLDER: Example Research Institute"
+        }
+      ],
+      "truth": {
+        "namedInsured": { "value": "Example Technology Studio", "evidencePages": [1] },
+        "certificateHolder": { "value": "Example Research Institute", "evidencePages": [2] },
+        "policies": [
+          {
+            "coverageType": { "value": "COMMERCIAL_GENERAL_LIABILITY", "evidencePages": [1] },
+            "insurerName": { "value": "Example Alpha Insurance", "evidencePages": [1] },
+            "policyNumber": { "value": "GL-MULTI-003", "evidencePages": [1] },
+            "effectiveDate": { "value": "2026-03-01", "evidencePages": [1] },
+            "expirationDate": { "value": "2027-03-01", "evidencePages": [1] },
+            "limits": {
+              "EACH_OCCURRENCE": { "value": 200000000, "evidencePages": [1] },
+              "GENERAL_AGGREGATE": { "value": 400000000, "evidencePages": [1] }
+            }
+          },
+          {
+            "coverageType": { "value": "CYBER_LIABILITY", "evidencePages": [2] },
+            "insurerName": { "value": "Example Beta Specialty", "evidencePages": [2] },
+            "policyNumber": { "value": "CYB-MULTI-003", "evidencePages": [2] },
+            "effectiveDate": { "value": "2026-04-01", "evidencePages": [2] },
+            "expirationDate": { "value": "2027-04-01", "evidencePages": [2] },
+            "limits": {
+              "EACH_CLAIM": { "value": 300000000, "evidencePages": [2] },
+              "AGGREGATE": { "value": 600000000, "evidencePages": [2] }
+            }
+          }
+        ],
+        "endorsements": []
+      },
+      "warningCodes": ["MULTIPLE_INSURERS_UNASSIGNED"]
+    },
+    {
+      "id": "incomplete_general_liability",
+      "description": "A coverage and limit are present while the policy number and dates are absent.",
+      "strata": ["ideal-text", "single-page", "missing-fields", "warning-evaluation"],
+      "pages": [
+        {
+          "page": 1,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nNAMED INSURED: Example Incomplete Contractor\nINSURER A: Example Incomplete Mutual 56789\nCOMMERCIAL GENERAL LIABILITY\nEACH OCCURRENCE $750,000"
+        }
+      ],
+      "truth": {
+        "namedInsured": { "value": "Example Incomplete Contractor", "evidencePages": [1] },
+        "policies": [
+          {
+            "coverageType": { "value": "COMMERCIAL_GENERAL_LIABILITY", "evidencePages": [1] },
+            "insurerName": { "value": "Example Incomplete Mutual", "evidencePages": [1] },
+            "limits": {
+              "EACH_OCCURRENCE": { "value": 75000000, "evidencePages": [1] }
+            }
+          }
+        ],
+        "endorsements": []
+      },
+      "warningCodes": ["NO_POLICY_NUMBER", "NO_POLICY_DATES"]
+    },
+    {
+      "id": "workers_and_employers_liability",
+      "description": "Related workers-compensation and employers-liability rows are kept distinct across pages.",
+      "strata": ["ideal-text", "multi-page", "workers-compensation", "employers-liability"],
+      "pages": [
+        {
+          "page": 1,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nNAMED INSURED: Example Fabrication Works\nCERTIFICATE HOLDER: Example Manufacturing Owner\nINSURER A: Example Workers Insurance 67890\nWORKERS' COMPENSATION\nPOLICY NUMBER: WC-TEXT-005\n05/01/2026 05/01/2027"
+        },
+        {
+          "page": 2,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nEMPLOYERS LIABILITY\nPOLICY NUMBER: EL-TEXT-005\n05/01/2026 05/01/2027\nE.L. EACH ACCIDENT $1,000,000\nDISEASE - EACH EMPLOYEE $1,000,000\nDISEASE - POLICY LIMIT $1,000,000"
+        }
+      ],
+      "truth": {
+        "namedInsured": { "value": "Example Fabrication Works", "evidencePages": [1] },
+        "certificateHolder": { "value": "Example Manufacturing Owner", "evidencePages": [1] },
+        "policies": [
+          {
+            "coverageType": { "value": "WORKERS_COMPENSATION", "evidencePages": [1] },
+            "insurerName": { "value": "Example Workers Insurance", "evidencePages": [1] },
+            "policyNumber": { "value": "WC-TEXT-005", "evidencePages": [1] },
+            "effectiveDate": { "value": "2026-05-01", "evidencePages": [1] },
+            "expirationDate": { "value": "2027-05-01", "evidencePages": [1] },
+            "limits": {}
+          },
+          {
+            "coverageType": { "value": "EMPLOYERS_LIABILITY", "evidencePages": [2] },
+            "insurerName": { "value": "Example Workers Insurance", "evidencePages": [1] },
+            "policyNumber": { "value": "EL-TEXT-005", "evidencePages": [2] },
+            "effectiveDate": { "value": "2026-05-01", "evidencePages": [2] },
+            "expirationDate": { "value": "2027-05-01", "evidencePages": [2] },
+            "limits": {
+              "EACH_ACCIDENT": { "value": 100000000, "evidencePages": [2] },
+              "DISEASE_EACH_EMPLOYEE": { "value": 100000000, "evidencePages": [2] },
+              "DISEASE_POLICY_LIMIT": { "value": 100000000, "evidencePages": [2] }
+            }
+          }
+        ],
+        "endorsements": []
+      },
+      "warningCodes": []
+    },
+    {
+      "id": "unclassified_policy",
+      "description": "Useful policy evidence without a recognized coverage heading remains explicitly OTHER.",
+      "strata": ["ideal-text", "single-page", "unclassified-coverage"],
+      "pages": [
+        {
+          "page": 1,
+          "text": "SYNTHETIC TEST FIXTURE - VOID - NOT EVIDENCE OF INSURANCE\nNAMED INSURED: Example Miscellaneous Services\nCERTIFICATE HOLDER: Example Community Center\nINSURER A: Example Miscellaneous Insurance 78901\nPOLICY NUMBER: MISC-TEXT-006\nPOLICY EFF: 06/01/2026\nPOLICY EXP: 06/01/2027"
+        }
+      ],
+      "truth": {
+        "namedInsured": { "value": "Example Miscellaneous Services", "evidencePages": [1] },
+        "certificateHolder": { "value": "Example Community Center", "evidencePages": [1] },
+        "policies": [
+          {
+            "coverageType": { "value": "OTHER", "evidencePages": [1] },
+            "insurerName": { "value": "Example Miscellaneous Insurance", "evidencePages": [1] },
+            "policyNumber": { "value": "MISC-TEXT-006", "evidencePages": [1] },
+            "effectiveDate": { "value": "2026-06-01", "evidencePages": [1] },
+            "expirationDate": { "value": "2027-06-01", "evidencePages": [1] },
+            "limits": {}
+          }
+        ],
+        "endorsements": []
+      },
+      "warningCodes": ["NO_COVERAGE_SECTIONS"]
+    }
+  ]
+}

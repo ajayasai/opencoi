@@ -38,6 +38,7 @@ const baseConfig: AppConfig = {
   sessionCookieName: "opencoi_test_session",
   secureCookies: false,
   tokenPepper: "reminder-test-token-pepper-at-least-32-bytes",
+  oidc: null,
   smtp: null,
   remindersEnabled: true,
   reminderPollMs: 60_000,

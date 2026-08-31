@@ -1,0 +1,78 @@
+name: Authorized benchmark run
+description: Propose a reproducible, permissioned result for the public COI extraction benchmark.
+title: "[Benchmark]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this form to propose a benchmark adapter or prediction file. Do not upload real certificates, personal data, credentials, proprietary exports, screenshots, copied product content, or material you are not authorized to publish. A submitted result is descriptive evidence for one declared mode and corpus—not a universal product ranking.
+
+  - type: checkboxes
+    id: authorization
+    attributes:
+      label: Authorization and method checks
+      options:
+        - label: I had lawful access to the evaluated system and permission to publish this result.
+          required: true
+        - label: Predictions were frozen before I opened or used the truth labels.
+          required: true
+        - label: I used the unmodified corpus identified below and the same declared run mode for every compared system.
+          required: true
+        - label: The submission contains no real COIs, personal data, credentials, proprietary product content, or confidential contract terms.
+          required: true
+        - label: I will disclose human assistance, retries, settings, failures, exclusions, and conflicts of interest.
+          required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: System and exact version
+      placeholder: Product or parser name, release/build, and evaluation date
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Run mode
+      options:
+        - Zero-touch supplied-page-text parsing
+        - Browser/PDF OCR without human correction
+        - Human-assisted review
+    validations:
+      required: true
+
+  - type: input
+    id: corpus_hash
+    attributes:
+      label: Corpus SHA-256
+      description: Copy the hash emitted by the benchmark tooling; do not type a corpus name in place of the hash.
+      placeholder: 64 lowercase hexadecimal characters
+    validations:
+      required: true
+
+  - type: textarea
+    id: procedure
+    attributes:
+      label: Reproduction procedure and settings
+      description: Include commands or UI steps, model/OCR versions, locale, retries, human involvement, exclusions, and the prediction-file location.
+    validations:
+      required: true
+
+  - type: textarea
+    id: failures
+    attributes:
+      label: Failures and limitations
+      description: List failed cases, unsupported fields, deviations, and why this result cannot establish general superiority.
+    validations:
+      required: true
+
+  - type: textarea
+    id: authorization_record
+    attributes:
+      label: Publication authorization record
+      description: Describe who authorized publication and how maintainers can verify it privately. Do not paste confidential agreements or contact data into this public issue.
+    validations:
+      required: true

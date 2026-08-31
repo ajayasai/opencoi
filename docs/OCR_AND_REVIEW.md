@@ -17,11 +17,13 @@ OpenCOI does not send PDF pages, page images, or extracted text to a third-party
 
 When the user submits, the browser sends the original PDF, extracted page text, extraction method metadata, and edited structured facts to the self-hosted OpenCOI server. The server stores the original PDF and the extraction/review record. "Browser-side OCR" therefore does not mean that submitted documents stay only on the user's device.
 
+Page citations are client-origin metadata, not independent server OCR. The server requires a strict page record, rejects duplicate or missing cited pages, and requires each citation to match a normalized line in the submitted text for that page. This establishes internal consistency but cannot prove that client-submitted text came from the PDF. The authorized reviewer's explicit comparison with the stored original is the trust boundary that establishes human-confirmed document facts.
+
 ## Extraction pipeline
 
 ### 1. File selection
 
-The browser checks the filename or declared MIME type, size, and the `%PDF-` signature before starting extraction. The server repeats authoritative signature and size checks and does not trust client metadata.
+The browser checks the filename or declared MIME type, size, and the `%PDF-` signature before starting extraction. The server independently repeats authoritative signature and size checks; browser claims about those file checks are not authoritative.
 
 ### 2. Digital text first
 
@@ -31,7 +33,7 @@ For each page, PDF.js reconstructs lines from text items. A page with at least 8
 
 A page below the usable-text threshold is rendered at 1.65× scale and passed to an English Tesseract worker. Progress is shown per page. OCR confidence is retained as a proposal hint only.
 
-To bound browser resource use, v0.1 OCR-processes at most the first 20 scanned pages. Additional pages remain available in the document but require manual transcription and confirmation.
+To bound browser resource use, v0.2 OCR-processes at most the first 20 scanned pages. Additional pages remain available in the document but require manual transcription and confirmation.
 
 ### 4. Heuristic field proposals
 
@@ -65,7 +67,7 @@ The server forces every public-link submission to `UNCONFIRMED`, even if a modif
 
 Treat the URL as a secret. Anyone with an active unused link can submit a document for that vendor.
 
-## Fields in the v0.1 review form
+## Fields in the v0.2 review form
 
 The review workspace supports:
 
@@ -78,11 +80,11 @@ The review workspace supports:
 
 Blank values remain absent. They are not converted to zero. The reviewer chooses among no evidence, a certificate mention, an endorsement included in the PDF package, and an attached endorsement personally reviewed. A certificate indication is never automatically promoted to attached or human-verified evidence.
 
-The underlying metadata and rule model represent more coverage and limit types than the v0.1 form exposes. Unusual documents still require careful manual mapping and should remain `UNKNOWN` or `FAIL` when the reviewer cannot establish the required evidence level.
+The underlying metadata and rule model represent more coverage and limit types than the v0.2 form exposes. Unusual documents still require careful manual mapping and should remain `UNKNOWN` or `FAIL` when the reviewer cannot establish the required evidence level.
 
 ## Extraction and server limits
 
-| Boundary | v0.1 behavior |
+| Boundary | v0.2 behavior |
 | --- | --- |
 | Upload size | 15 MiB by default; server-configurable from 1 through 100 MiB. The browser form currently enforces 15 MiB. |
 | Stored PDF page safety limit | 75 pages, based on conservative byte-level page-marker inspection. |
@@ -124,7 +126,7 @@ The standard deployment retains:
 - persisted findings and exception links; and
 - related audit events.
 
-These records can contain personal and commercially sensitive information. Operators must define retention, access, backup, deletion, and incident-response practices. The v0.1 UI does not provide a complete retention-policy engine.
+These records can contain personal and commercially sensitive information. Operators must define retention, access, backup, deletion, and incident-response practices. The v0.2 UI does not provide a complete retention-policy engine.
 
 ## Review checklist
 

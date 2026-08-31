@@ -11,6 +11,7 @@ import {
   Field,
   Modal,
   PageLoader,
+  Textarea,
   TextInput,
 } from "../components/ui";
 import { useAuth } from "../state/AuthContext";
@@ -349,8 +350,7 @@ export function ExceptionsPage() {
               label="Decision rationale"
               hint="This note is permanent audit context for the decision."
             >
-              <textarea
-                className="input"
+              <Textarea
                 required
                 minLength={10}
                 value={reason}

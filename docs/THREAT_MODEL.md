@@ -105,7 +105,7 @@ a security certification.
 | T8 | Unauthorized or dangerous exports | Reauthorize at generation and download, audit both, minimize columns, use short-lived private artifacts, and neutralize cells beginning with `=`, `+`, `-`, or `@`. Never place bearer tokens or hidden document text in exports. |
 | T9 | Reminder leakage, spam, or duplicate delivery | Put a link—not a COI or detailed deficiency—in email; keep subject lines neutral. Use deterministic idempotency keys, recipient and tenant rate caps, bounded retries, bounce/suppression handling, and cancellation of obsolete reminders after a renewal. |
 | T10 | Sensitive data appears in telemetry, logs, temporary files, or backups | Never log raw tokens, session IDs, PDFs, full OCR text, credentials, or email bodies. Encrypt transport and managed storage, restrict operational access, define retention for each derivative and backup, and test deletion and restoration. Exclude documents from crash reports and support bundles. |
-| T11 | Session theft, credential attacks, CSRF, or privilege persistence | Prefer established OIDC/SAML or passkeys. If local passwords are supported, use a modern memory-hard password hash and breached-password screening. Use Secure, HttpOnly, SameSite cookies, CSRF defenses, rotation, short privileged sessions, rate limits, MFA for sensitive roles, and reauthentication for role, export, and exception changes. A role downgrade must invalidate privileged sessions. |
+| T11 | Session theft, credential attacks, OIDC mix-up, login CSRF, or privilege persistence | For OIDC, pin the exact issuer and organization, use Authorization Code with PKCE, state, nonce, one-use transactions, and exact callback URLs; bind immutable issuer/subject identities only to pre-provisioned active users and never derive roles from untrusted claims. If local passwords are supported, use a modern memory-hard password hash and breached-password screening. Use Secure, HttpOnly, SameSite cookies, CSRF defenses, rotation, short privileged sessions, rate limits, MFA for sensitive roles, and reauthentication for role, export, and exception changes. A role downgrade must invalidate privileged sessions. |
 | T12 | Parser, package, build, or release supply-chain compromise | Pin dependencies with a lockfile, minimize parser and OCR dependencies, run automated vulnerability and secret scanning, review install scripts, publish an SBOM, protect release credentials, and sign or attest releases where practical. |
 | T13 | Resource exhaustion through uploads, OCR, searches, exports, or reminders | Apply per-request and per-organization quotas, concurrency caps, timeouts, pagination, job backpressure, and cost monitoring. A failure must not leave an invitation consumed, partial document trusted, or reminder duplicated. |
 | T14 | A document assessment is mistaken for live policy status | Use the bounded status vocabulary, show the document issue/revision and evaluation dates, retain the source, and display the product disclaimer beside results and exports. Never infer cancellation status or current coverage from silence. |
@@ -151,6 +151,28 @@ default unless the operator makes an informed choice about region, retention,
 model-training use, subprocessors, and contractual terms. Manual entry must
 remain possible when external processing is unavailable or prohibited.
 
+### Service API and outbound webhook boundary
+
+Machine credentials are separate from browser sessions. A service-account
+token determines its organization and scopes from the stored record; clients
+cannot supply a tenant selector. Tokens contain 256 bits of random secret
+material, are displayed once, stored only as digests, can overlap during
+rotation, and can be individually revoked or disabled as a group. Operators
+must still keep tokens out of source control, URLs, browser storage, and logs.
+
+Webhook destinations are attacker-influenced outbound network targets and a
+potential document-data exfiltration path. Only owners/admins can configure
+them. Every attempt requires public HTTPS, rejects URL credentials and
+private/special or mixed DNS answers, pins the validated address, follows no
+redirects, and bounds time and response bytes. Network egress policy should
+still restrict the container; application SSRF checks are not a firewall.
+
+Webhook bodies use a stable event ID and attempt timestamp with an HMAC-SHA256
+signature. Receivers must verify the exact raw body, enforce a timestamp
+tolerance, and deduplicate IDs. Signing secrets are AES-256-GCM encrypted with
+record-bound context derived from stable deployment key material. Compromise of
+the application host or `TOKEN_PEPPER` defeats this at-rest boundary.
+
 ## Verification plan
 
 At minimum, security tests should cover:
@@ -167,6 +189,9 @@ At minimum, security tests should cover:
   prompt-injection text;
 - signed URL expiry, session rotation, role downgrade, CSRF, and rate-limit
   boundaries;
+- OIDC discovery and callback failures, issuer/audience/signature/nonce/state/PKCE validation, transaction expiry and replay, disabled or unprovisioned users, and cross-organization identity collisions;
+- service-account scope, tenant confusion, expiration, rotation, revocation, disabled-account, idempotency-key, and stale-ETag behavior;
+- webhook signatures, stable retry IDs, dead-letter replay, delivery leasing, DNS rebinding, mixed DNS, private IPv4/IPv6, redirects, timeouts, and oversized responses;
 - direct audit-event update/delete and exception self-approval restrictions;
 - deterministic evaluation and `UNKNOWN` behavior for missing or incomparable
   values;

@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "opencoi-scale-v1",
+  "generatedAt": "2026-08-31T13:07:49.740Z",
+  "workload": {
+    "name": "tenant vendor summary list",
+    "implementation": "single aggregate SQL statement plus in-process status mapping",
+    "database": "SQLite :memory:",
+    "documents": 0,
+    "warmupRuns": 1,
+    "measuredRuns": 10,
+    "warning": "Latency is hardware-specific and is not a capacity guarantee."
+  },
+  "runtime": {
+    "node": "v24.13.0",
+    "platform": "win32",
+    "release": "10.0.26200",
+    "cpu": "Intel(R) Core(TM) Ultra 7 155U",
+    "logicalCpus": 14,
+    "totalMemoryMb": 32309.98,
+    "freeMemoryMbAtEnd": 14085.828
+  },
+  "results": [
+    {
+      "vendors": 100,
+      "rowsReturned": 100,
+      "samples": 10,
+      "latencyMs": {
+        "min": 2.079,
+        "median": 2.183,
+        "p95": 3.701,
+        "max": 3.701
+      },
+      "processRssMb": 78.254
+    },
+    {
+      "vendors": 1000,
+      "rowsReturned": 1000,
+      "samples": 10,
+      "latencyMs": {
+        "min": 9.943,
+        "median": 11.113,
+        "p95": 16.372,
+        "max": 16.372
+      },
+      "processRssMb": 91.871
+    },
+    {
+      "vendors": 10000,
+      "rowsReturned": 10000,
+      "samples": 10,
+      "latencyMs": {
+        "min": 86.703,
+        "median": 96.13,
+        "p95": 117.801,
+        "max": 117.801
+      },
+      "processRssMb": 204.148
+    }
+  ]
+}

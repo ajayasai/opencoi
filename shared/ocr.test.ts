@@ -3,10 +3,12 @@ import {
   extractCoiFields,
   findDateCandidates,
   normalizeOcrText,
+  parseCertificateHolderFromLine,
   parseCoiText,
   parseDateCandidate,
   parseInsurerNameFromLine,
   parseMoneyMinorUnits,
+  parseNamedInsuredFromLine,
   parsePolicyNumberFromLine,
 } from "./ocr.js";
 
@@ -85,6 +87,20 @@ describe("OCR field parsers", () => {
     expect(parseInsurerNameFromLine("INSURER(S) AFFORDING COVERAGE")).toBeNull();
   });
 
+  it("parses named-insured and certificate-holder parties conservatively", () => {
+    expect(parseNamedInsuredFromLine("NAMED INSURED: Example Builders LLC")).toBe(
+      "Example Builders LLC",
+    );
+    expect(parseNamedInsuredFromLine("INSURED NAME - Example Services Inc.")).toBe(
+      "Example Services Inc.",
+    );
+    expect(parseCertificateHolderFromLine("CERTIFICATE HOLDER: Example Owner")).toBe(
+      "Example Owner",
+    );
+    expect(parseNamedInsuredFromLine("INSURER A: Not an insured")).toBeNull();
+    expect(parseCertificateHolderFromLine("CERTIFICATE HOLDER: N/A")).toBeNull();
+  });
+
   it("normalizes OCR typography while preserving useful line boundaries", () => {
     expect(normalizeOcrText(" A\u00a0 B\r\n\r\n\r\nC—D\u0000 ")).toBe("A B\n\nC-D");
   });
@@ -128,7 +144,7 @@ describe("COI OCR-assisted extraction", () => {
     expect(result.document.endorsements[0]).toMatchObject({
       formCode: { value: "CG 20 10", confirmation: "UNCONFIRMED" },
       name: { value: "Additional insured" },
-      evidenceLevel: { value: "ATTACHED", confirmation: "UNCONFIRMED" },
+      evidenceLevel: { value: "MENTIONED", confirmation: "UNCONFIRMED" },
     });
     expect(result.warnings).toEqual([]);
   });
@@ -201,16 +217,106 @@ describe("COI OCR-assisted extraction", () => {
     expect(empty.document.policies).toEqual([]);
   });
 
-  it("never promotes OCR evidence to human-verified or confirmed", () => {
+  it("never promotes OCR endorsement text above mentioned or confirms it", () => {
     const result = parseCoiText(`
       COMMERCIAL GENERAL LIABILITY
       GL-123 01/01/2026 01/01/2027
       CG 20 10 endorsement verified and attached
     `);
     const endorsement = result.document.endorsements[0];
-    expect(endorsement?.evidenceLevel.value).toBe("ATTACHED");
+    expect(endorsement?.evidenceLevel.value).toBe("MENTIONED");
+    expect(endorsement?.evidenceLevel.value).not.toBe("ATTACHED");
     expect(endorsement?.evidenceLevel.value).not.toBe("HUMAN_VERIFIED");
     expect(endorsement?.evidenceLevel.confirmation).toBe("UNCONFIRMED");
     expect(result.document.policies[0]?.coverageType.confirmation).toBe("UNCONFIRMED");
+  });
+
+  it("preserves page and source-line provenance for every proposed field and candidate", () => {
+    const result = parseCoiText(`--- Page 1 ---
+NAMED INSURED: Example Builders LLC
+INSURER A: Example Mutual Insurance 12345
+COMMERCIAL GENERAL LIABILITY
+--- Page 2 ---
+POLICY NUMBER: GL-PAGE-123
+POLICY EFF: 01/01/2026
+POLICY EXP: 01/01/2027
+EACH OCCURRENCE $1,000,000
+--- Page 3 ---
+CERTIFICATE HOLDER: Example Property Owner
+CG 20 10 Additional Insured endorsement attached and verified`);
+
+    expect(result.document.namedInsured).toMatchObject({
+      value: "Example Builders LLC",
+      page: 1,
+      rawText: "NAMED INSURED: Example Builders LLC",
+    });
+    expect(result.document.certificateHolder).toMatchObject({
+      value: "Example Property Owner",
+      page: 3,
+      rawText: "CERTIFICATE HOLDER: Example Property Owner",
+    });
+
+    const policy = result.document.policies[0];
+    expect(policy?.coverageType).toMatchObject({
+      page: 1,
+      rawText: "COMMERCIAL GENERAL LIABILITY",
+    });
+    expect(policy?.insurerName).toMatchObject({ page: 1 });
+    expect(policy?.policyNumber).toMatchObject({ page: 2, rawText: "POLICY NUMBER: GL-PAGE-123" });
+    expect(policy?.effectiveDate).toMatchObject({ page: 2 });
+    expect(policy?.expirationDate).toMatchObject({ page: 2 });
+    expect(policy?.limits.EACH_OCCURRENCE).toMatchObject({
+      page: 2,
+      rawText: "EACH OCCURRENCE $1,000,000",
+    });
+    expect(result.document.endorsements[0]).toMatchObject({
+      formCode: { page: 3 },
+      name: { page: 3 },
+      evidenceLevel: { value: "MENTIONED", page: 3 },
+    });
+
+    const candidates = [
+      ...result.candidates.insurerNames,
+      ...result.candidates.namedInsuredNames,
+      ...result.candidates.certificateHolderNames,
+      ...result.candidates.policyNumbers,
+      ...result.candidates.dates,
+    ];
+    expect(candidates.length).toBeGreaterThan(0);
+    expect(candidates.every((field) => field.page !== undefined && Boolean(field.rawText))).toBe(
+      true,
+    );
+  });
+
+  it("supports two-line party labels without crossing a page boundary", () => {
+    const result = parseCoiText(`--- Page 4 ---
+NAMED INSURED
+Example Mechanical LLC
+CERTIFICATE HOLDER
+Example University
+--- Page 5 ---
+NAMED INSURED
+--- Page 6 ---
+Wrong Page Company
+--- Page 7 ---
+NAMED INSURED
+COMMERCIAL GENERAL LIABILITY`);
+
+    expect(result.document.namedInsured).toMatchObject({
+      value: "Example Mechanical LLC",
+      page: 4,
+      rawText: "Example Mechanical LLC",
+    });
+    expect(result.document.certificateHolder).toMatchObject({
+      value: "Example University",
+      page: 4,
+      rawText: "Example University",
+    });
+    expect(result.candidates.namedInsuredNames.map((field) => field.value)).not.toContain(
+      "Wrong Page Company",
+    );
+    expect(result.candidates.namedInsuredNames.map((field) => field.value)).not.toContain(
+      "COMMERCIAL GENERAL LIABILITY",
+    );
   });
 });

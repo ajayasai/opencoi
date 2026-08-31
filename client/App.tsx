@@ -15,6 +15,9 @@ const DashboardPage = lazy(() =>
 const ExceptionsPage = lazy(() =>
   import("./pages/ExceptionsPage").then((module) => ({ default: module.ExceptionsPage })),
 );
+const IntegrationsPage = lazy(() =>
+  import("./pages/IntegrationsPage").then((module) => ({ default: module.IntegrationsPage })),
+);
 const RemindersPage = lazy(() =>
   import("./pages/RemindersPage").then((module) => ({ default: module.RemindersPage })),
 );
@@ -104,6 +107,7 @@ export function App() {
             <Route path="exceptions" element={<ExceptionsPage />} />
             <Route path="reminders" element={<RemindersPage />} />
             <Route path="audit" element={<AuditPage />} />
+            <Route path="integrations" element={<IntegrationsPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Route>
         </Route>

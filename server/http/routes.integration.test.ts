@@ -64,6 +64,7 @@ const config: AppConfig = {
   sessionCookieName: "opencoi_test_session",
   secureCookies: false,
   tokenPepper: "integration-test-token-pepper-at-least-32-bytes",
+  oidc: null,
   smtp: null,
   remindersEnabled: false,
   reminderPollMs: 60_000,
@@ -475,7 +476,7 @@ describe("OpenCOI API integration", () => {
           producer: "Untrusted OCR producer",
           certificateHolder: "Wrong holder",
           rawText: "ORIGINAL OCR PAYLOAD",
-          pages: [{ page: 1, source: "local-extraction" }],
+          pages: [{ page: 1, text: "ORIGINAL OCR PAYLOAD", method: "text_layer" }],
           policies: [
             {
               coverageType: "COMMERCIAL_GENERAL_LIABILITY",
@@ -611,7 +612,7 @@ describe("OpenCOI API integration", () => {
     const extraction = JSON.parse(storedDocument.extraction_json);
     expect(extraction).toMatchObject({
       rawText: "ORIGINAL OCR PAYLOAD",
-      pages: [{ page: 1, source: "local-extraction" }],
+      pages: [{ page: 1, text: "ORIGINAL OCR PAYLOAD", method: "text_layer" }],
       reviewStatus: "CONFIRMED",
       namedInsured: "Formula Electric LLC",
       _opencoi: {

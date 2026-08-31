@@ -8,10 +8,15 @@ import {
   X,
 } from "lucide-react";
 import {
+  type AriaAttributes,
   type ButtonHTMLAttributes,
+  createContext,
+  forwardRef,
   type HTMLAttributes,
   type InputHTMLAttributes,
   type ReactNode,
+  type TextareaHTMLAttributes,
+  useContext,
   useEffect,
   useId,
   useRef,
@@ -45,20 +50,20 @@ export function Button({
   );
 }
 
-export function IconButton({
-  label,
-  className,
-  ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+export const IconButton = forwardRef<
+  HTMLButtonElement,
+  ButtonHTMLAttributes<HTMLButtonElement> & { label: string }
+>(function IconButton({ label, className, ...props }, ref) {
   return (
     <button
+      ref={ref}
       type="button"
       className={classNames("icon-button", className)}
       aria-label={label}
       {...props}
     />
   );
-}
+});
 
 export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={classNames("card", className)} {...props} />;
@@ -105,6 +110,37 @@ export function LifecycleBadge({ status }: { status: LifecycleStatus }) {
   return <Badge tone={tone}>{lifecycleCopy[status]}</Badge>;
 }
 
+interface FieldContextValue {
+  describedBy?: string;
+  hasError: boolean;
+  labelledBy: string;
+}
+
+const FieldContext = createContext<FieldContextValue | null>(null);
+
+const joinIds = (...values: Array<string | undefined>): string | undefined => {
+  const ids = values.flatMap((value) => value?.split(/\s+/).filter(Boolean) ?? []);
+  return ids.length > 0 ? Array.from(new Set(ids)).join(" ") : undefined;
+};
+
+type FieldAccessibleProps = Pick<
+  AriaAttributes,
+  "aria-describedby" | "aria-invalid" | "aria-label" | "aria-labelledby"
+>;
+
+const fieldControlAccessibility = (
+  props: FieldAccessibleProps,
+  context: FieldContextValue | null,
+): FieldAccessibleProps => {
+  if (!context) return {};
+  const hasExplicitName = Boolean(props["aria-label"] || props["aria-labelledby"]);
+  return {
+    "aria-describedby": joinIds(props["aria-describedby"], context.describedBy),
+    "aria-invalid": props["aria-invalid"] ?? (context.hasError ? true : undefined),
+    "aria-labelledby": hasExplicitName ? props["aria-labelledby"] : context.labelledBy,
+  };
+};
+
 export function Field({
   label,
   hint,
@@ -118,19 +154,57 @@ export function Field({
   children: ReactNode;
   className?: string;
 }) {
-  const id = useId();
+  const baseId = useId();
+  const labelId = `${baseId}-label`;
+  const hintId = hint ? `${baseId}-hint` : undefined;
+  const errorId = error ? `${baseId}-error` : undefined;
+  const describedBy = joinIds(hintId, errorId);
   return (
-    <label className={classNames("field", className)} htmlFor={id}>
-      <span className="field__label">{label}</span>
-      {hint && <span className="field__hint">{hint}</span>}
-      {typeof children === "string" ? <input id={id} value={children} readOnly /> : children}
-      {error && <span className="field__error">{error}</span>}
-    </label>
+    <FieldContext.Provider value={{ describedBy, hasError: Boolean(error), labelledBy: labelId }}>
+      <div className={classNames("field", className)}>
+        <span className="field__label" id={labelId}>
+          {label}
+        </span>
+        {hint && (
+          <span className="field__hint" id={hintId}>
+            {hint}
+          </span>
+        )}
+        {typeof children === "string" ? <TextInput value={children} readOnly /> : children}
+        {error && (
+          <span className="field__error" id={errorId}>
+            {error}
+          </span>
+        )}
+      </div>
+    </FieldContext.Provider>
   );
 }
 
 export function TextInput({ className, ...props }: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={classNames("input", className)} {...props} />;
+  const context = useContext(FieldContext);
+  const fallbackId = useId();
+  return (
+    <input
+      {...props}
+      {...fieldControlAccessibility(props, context)}
+      id={props.id ?? fallbackId}
+      className={classNames("input", className)}
+    />
+  );
+}
+
+export function Textarea({ className, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  const context = useContext(FieldContext);
+  const fallbackId = useId();
+  return (
+    <textarea
+      {...props}
+      {...fieldControlAccessibility(props, context)}
+      id={props.id ?? fallbackId}
+      className={classNames("input", className)}
+    />
+  );
 }
 
 export function Select({
@@ -138,9 +212,16 @@ export function Select({
   children,
   ...props
 }: React.SelectHTMLAttributes<HTMLSelectElement>) {
+  const context = useContext(FieldContext);
+  const fallbackId = useId();
   return (
     <span className="select-wrap">
-      <select className={classNames("input", "select", className)} {...props}>
+      <select
+        {...props}
+        {...fieldControlAccessibility(props, context)}
+        id={props.id ?? fallbackId}
+        className={classNames("input", "select", className)}
+      >
         {children}
       </select>
       <ChevronDown size={16} aria-hidden="true" />

@@ -4,7 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { Modal } from "./ui";
+import { Field, Modal, Select, Textarea, TextInput } from "./ui";
 
 afterEach(cleanup);
 
@@ -56,5 +56,83 @@ describe("Modal", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+});
+
+describe("Field", () => {
+  it("provides a visible accessible name, descriptions, and error state", () => {
+    render(
+      <Field
+        label="Contact email"
+        hint="Used for renewal reminders."
+        error="Enter a valid email address."
+      >
+        <TextInput type="email" />
+      </Field>,
+    );
+
+    const input = screen.getByRole("textbox", { name: "Contact email" });
+    expect(input).toHaveAccessibleDescription(
+      "Used for renewal reminders. Enter a valid email address.",
+    );
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveAttribute("id");
+  });
+
+  it("labels controls nested inside visual wrappers", () => {
+    render(
+      <Field label="Password">
+        <span>
+          <TextInput type="password" />
+          <button type="button" aria-label="Show password">
+            Show
+          </button>
+        </span>
+      </Field>,
+    );
+
+    expect(screen.getByLabelText("Password")).toHaveAttribute("type", "password");
+    expect(screen.getByRole("button", { name: "Show password" })).toBeInTheDocument();
+  });
+
+  it("associates compound controls without reusing an id", () => {
+    render(
+      <Field label="Primary limit" hint="Choose the exact document label.">
+        <Select defaultValue="EACH_OCCURRENCE">
+          <option value="EACH_OCCURRENCE">Each occurrence</option>
+        </Select>
+        <TextInput inputMode="decimal" />
+      </Field>,
+    );
+
+    const select = screen.getByRole("combobox", { name: "Primary limit" });
+    const input = screen.getByRole("textbox", { name: "Primary limit" });
+    expect(select).toHaveAccessibleDescription("Choose the exact document label.");
+    expect(input).toHaveAccessibleDescription("Choose the exact document label.");
+    expect(select.id).not.toBe(input.id);
+  });
+
+  it("preserves an explicit accessible name while connecting a hint", () => {
+    render(
+      <Field label="Currency" hint="Only U.S. dollars are supported.">
+        <Select aria-label="Requirement currency" defaultValue="USD">
+          <option value="USD">USD</option>
+        </Select>
+      </Field>,
+    );
+
+    expect(
+      screen.getByRole("combobox", { name: "Requirement currency" }),
+    ).toHaveAccessibleDescription("Only U.S. dollars are supported.");
+  });
+
+  it("applies the same contract to multiline controls", () => {
+    render(
+      <Field label="Business rationale">
+        <Textarea />
+      </Field>,
+    );
+
+    expect(screen.getByRole("textbox", { name: "Business rationale" }).tagName).toBe("TEXTAREA");
   });
 });

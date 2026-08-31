@@ -1,0 +1,355 @@
+{
+  "schemaVersion": "1.0",
+  "corpusId": "opencoi-synthetic-text-v1",
+  "corpusSha256": "af737d1acaa50b4c827b78dfeecba30219dc484e0022f869d111381073020012",
+  "mode": "ZERO_TOUCH_TEXT_PARSE",
+  "system": {
+    "id": "opencoi-shared-parser",
+    "name": "OpenCOI shared text parser",
+    "version": "v0.2.0"
+  },
+  "cases": [
+    {
+      "caseId": "single_page_general_liability",
+      "facts": {
+        "namedInsured": {
+          "value": "Example Builders LLC",
+          "evidencePages": [1]
+        },
+        "certificateHolder": {
+          "value": "Example Property Owner",
+          "evidencePages": [1]
+        },
+        "policies": [
+          {
+            "coverageType": {
+              "value": "COMMERCIAL_GENERAL_LIABILITY",
+              "evidencePages": [1]
+            },
+            "insurerName": {
+              "value": "Example Mutual Insurance",
+              "evidencePages": [1]
+            },
+            "policyNumber": {
+              "value": "GL-SYN-001",
+              "evidencePages": [1]
+            },
+            "effectiveDate": {
+              "value": "2026-01-01",
+              "evidencePages": [1]
+            },
+            "expirationDate": {
+              "value": "2027-01-01",
+              "evidencePages": [1]
+            },
+            "limits": {
+              "EACH_OCCURRENCE": {
+                "value": 100000000,
+                "evidencePages": [1]
+              },
+              "GENERAL_AGGREGATE": {
+                "value": 200000000,
+                "evidencePages": [1]
+              },
+              "PRODUCTS_COMPLETED_OPERATIONS_AGGREGATE": {
+                "value": 200000000,
+                "evidencePages": [1]
+              }
+            }
+          }
+        ],
+        "endorsements": [
+          {
+            "name": {
+              "value": "Additional insured",
+              "evidencePages": [1]
+            },
+            "formCode": {
+              "value": "CG 20 10",
+              "evidencePages": [1]
+            },
+            "evidenceLevel": {
+              "value": "MENTIONED",
+              "evidencePages": [1]
+            }
+          }
+        ]
+      },
+      "warningCodes": []
+    },
+    {
+      "caseId": "multi_page_auto_with_waiver",
+      "facts": {
+        "namedInsured": {
+          "value": "Example Delivery Company",
+          "evidencePages": [1]
+        },
+        "certificateHolder": {
+          "value": "Example Transit Authority",
+          "evidencePages": [3]
+        },
+        "policies": [
+          {
+            "coverageType": {
+              "value": "AUTOMOBILE_LIABILITY",
+              "evidencePages": [1]
+            },
+            "insurerName": {
+              "value": "Example Casualty Company",
+              "evidencePages": [1]
+            },
+            "policyNumber": {
+              "value": "AUTO-TEXT-002",
+              "evidencePages": [1]
+            },
+            "effectiveDate": {
+              "value": "2026-02-01",
+              "evidencePages": [1]
+            },
+            "expirationDate": {
+              "value": "2027-02-01",
+              "evidencePages": [1]
+            },
+            "limits": {
+              "COMBINED_SINGLE_LIMIT": {
+                "value": 100000000,
+                "evidencePages": [1]
+              }
+            }
+          }
+        ],
+        "endorsements": [
+          {
+            "name": {
+              "value": "Waiver of subrogation",
+              "evidencePages": [2]
+            },
+            "evidenceLevel": {
+              "value": "MENTIONED",
+              "evidencePages": [2]
+            }
+          }
+        ]
+      },
+      "warningCodes": []
+    },
+    {
+      "caseId": "two_insurers_two_coverages",
+      "facts": {
+        "namedInsured": {
+          "value": "Example Technology Studio",
+          "evidencePages": [1]
+        },
+        "certificateHolder": {
+          "value": "Example Research Institute",
+          "evidencePages": [2]
+        },
+        "policies": [
+          {
+            "coverageType": {
+              "value": "COMMERCIAL_GENERAL_LIABILITY",
+              "evidencePages": [1]
+            },
+            "policyNumber": {
+              "value": "GL-MULTI-003",
+              "evidencePages": [1]
+            },
+            "effectiveDate": {
+              "value": "2026-03-01",
+              "evidencePages": [1]
+            },
+            "expirationDate": {
+              "value": "2027-03-01",
+              "evidencePages": [1]
+            },
+            "limits": {
+              "EACH_OCCURRENCE": {
+                "value": 200000000,
+                "evidencePages": [1]
+              },
+              "GENERAL_AGGREGATE": {
+                "value": 400000000,
+                "evidencePages": [1]
+              }
+            }
+          },
+          {
+            "coverageType": {
+              "value": "CYBER_LIABILITY",
+              "evidencePages": [2]
+            },
+            "policyNumber": {
+              "value": "CYB-MULTI-003",
+              "evidencePages": [2]
+            },
+            "effectiveDate": {
+              "value": "2026-04-01",
+              "evidencePages": [2]
+            },
+            "expirationDate": {
+              "value": "2027-04-01",
+              "evidencePages": [2]
+            },
+            "limits": {
+              "EACH_CLAIM": {
+                "value": 300000000,
+                "evidencePages": [2]
+              },
+              "AGGREGATE": {
+                "value": 600000000,
+                "evidencePages": [2]
+              }
+            }
+          }
+        ],
+        "endorsements": []
+      },
+      "warningCodes": ["MULTIPLE_INSURERS_UNASSIGNED"]
+    },
+    {
+      "caseId": "incomplete_general_liability",
+      "facts": {
+        "namedInsured": {
+          "value": "Example Incomplete Contractor",
+          "evidencePages": [1]
+        },
+        "policies": [
+          {
+            "coverageType": {
+              "value": "COMMERCIAL_GENERAL_LIABILITY",
+              "evidencePages": [1]
+            },
+            "insurerName": {
+              "value": "Example Incomplete Mutual",
+              "evidencePages": [1]
+            },
+            "limits": {
+              "EACH_OCCURRENCE": {
+                "value": 75000000,
+                "evidencePages": [1]
+              }
+            }
+          }
+        ],
+        "endorsements": []
+      },
+      "warningCodes": ["NO_POLICY_DATES", "NO_POLICY_NUMBER"]
+    },
+    {
+      "caseId": "workers_and_employers_liability",
+      "facts": {
+        "namedInsured": {
+          "value": "Example Fabrication Works",
+          "evidencePages": [1]
+        },
+        "certificateHolder": {
+          "value": "Example Manufacturing Owner",
+          "evidencePages": [1]
+        },
+        "policies": [
+          {
+            "coverageType": {
+              "value": "WORKERS_COMPENSATION",
+              "evidencePages": [1]
+            },
+            "insurerName": {
+              "value": "Example Workers Insurance",
+              "evidencePages": [1]
+            },
+            "policyNumber": {
+              "value": "WC-TEXT-005",
+              "evidencePages": [1]
+            },
+            "effectiveDate": {
+              "value": "2026-05-01",
+              "evidencePages": [1]
+            },
+            "expirationDate": {
+              "value": "2027-05-01",
+              "evidencePages": [1]
+            },
+            "limits": {}
+          },
+          {
+            "coverageType": {
+              "value": "EMPLOYERS_LIABILITY",
+              "evidencePages": [2]
+            },
+            "insurerName": {
+              "value": "Example Workers Insurance",
+              "evidencePages": [1]
+            },
+            "policyNumber": {
+              "value": "EL-TEXT-005",
+              "evidencePages": [2]
+            },
+            "effectiveDate": {
+              "value": "2026-05-01",
+              "evidencePages": [2]
+            },
+            "expirationDate": {
+              "value": "2027-05-01",
+              "evidencePages": [2]
+            },
+            "limits": {
+              "EACH_ACCIDENT": {
+                "value": 100000000,
+                "evidencePages": [2]
+              },
+              "DISEASE_EACH_EMPLOYEE": {
+                "value": 100000000,
+                "evidencePages": [2]
+              },
+              "DISEASE_POLICY_LIMIT": {
+                "value": 100000000,
+                "evidencePages": [2]
+              }
+            }
+          }
+        ],
+        "endorsements": []
+      },
+      "warningCodes": []
+    },
+    {
+      "caseId": "unclassified_policy",
+      "facts": {
+        "namedInsured": {
+          "value": "Example Miscellaneous Services",
+          "evidencePages": [1]
+        },
+        "certificateHolder": {
+          "value": "Example Community Center",
+          "evidencePages": [1]
+        },
+        "policies": [
+          {
+            "coverageType": {
+              "value": "OTHER",
+              "evidencePages": [1]
+            },
+            "insurerName": {
+              "value": "Example Miscellaneous Insurance",
+              "evidencePages": [1]
+            },
+            "policyNumber": {
+              "value": "MISC-TEXT-006",
+              "evidencePages": [1]
+            },
+            "effectiveDate": {
+              "value": "2026-06-01",
+              "evidencePages": [1]
+            },
+            "expirationDate": {
+              "value": "2027-06-01",
+              "evidencePages": [1]
+            },
+            "limits": {}
+          }
+        ],
+        "endorsements": []
+      },
+      "warningCodes": ["NO_COVERAGE_SECTIONS"]
+    }
+  ]
+}

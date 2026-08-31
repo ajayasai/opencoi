@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-export const DATABASE_SCHEMA_VERSION = 2;
+export const DATABASE_SCHEMA_VERSION = 3;
 
 const SCHEMA = `
 CREATE TABLE organizations (
@@ -52,6 +52,42 @@ CREATE TABLE sessions (
     REFERENCES users(organization_id, id) ON DELETE CASCADE,
   CHECK (length(token_hash) = 64),
   CHECK (length(csrf_token_hash) = 64)
+) STRICT;
+
+CREATE TABLE oidc_identities (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL,
+  issuer TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  email_at_binding TEXT COLLATE NOCASE,
+  created_at TEXT NOT NULL,
+  last_login_at TEXT NOT NULL,
+  UNIQUE (organization_id, id),
+  UNIQUE (organization_id, issuer, subject),
+  UNIQUE (organization_id, issuer, user_id),
+  FOREIGN KEY (organization_id, user_id)
+    REFERENCES users(organization_id, id) ON DELETE CASCADE,
+  CHECK (length(issuer) BETWEEN 1 AND 2048),
+  CHECK (length(subject) BETWEEN 1 AND 512)
+) STRICT;
+
+CREATE TABLE oidc_login_transactions (
+  id TEXT PRIMARY KEY,
+  organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  issuer TEXT NOT NULL,
+  transaction_token_hash TEXT NOT NULL UNIQUE,
+  state_hash TEXT NOT NULL,
+  code_verifier TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  consumed_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (organization_id, id),
+  CHECK (length(transaction_token_hash) = 64),
+  CHECK (length(state_hash) = 64),
+  CHECK (length(code_verifier) BETWEEN 43 AND 256),
+  CHECK (length(nonce) BETWEEN 32 AND 256)
 ) STRICT;
 
 CREATE TABLE vendor_types (
@@ -354,6 +390,9 @@ CREATE TABLE audit_events (
 
 CREATE INDEX sessions_active_lookup_idx
   ON sessions (organization_id, token_hash, expires_at) WHERE revoked_at IS NULL;
+CREATE INDEX oidc_transactions_active_idx
+  ON oidc_login_transactions (organization_id, transaction_token_hash, expires_at)
+  WHERE consumed_at IS NULL;
 CREATE INDEX requirements_vendor_type_idx
   ON coverage_requirements (organization_id, vendor_type_id, is_active);
 CREATE UNIQUE INDEX coverage_requirements_active_unique_idx
@@ -435,7 +474,7 @@ export const openDatabase = (
 
 export const initializeDatabase = (database: OpenCoiDatabase): void => {
   const row = database.prepare("PRAGMA user_version").get() as { user_version: number } | undefined;
-  const version = row?.user_version ?? 0;
+  let version = row?.user_version ?? 0;
   if (version > DATABASE_SCHEMA_VERSION) {
     throw new Error(
       `Database schema version ${version} is newer than supported version ${DATABASE_SCHEMA_VERSION}`,
@@ -447,6 +486,7 @@ export const initializeDatabase = (database: OpenCoiDatabase): void => {
       database.exec(SCHEMA);
       database.exec(`PRAGMA user_version = ${DATABASE_SCHEMA_VERSION}`);
       database.exec("COMMIT");
+      version = DATABASE_SCHEMA_VERSION;
     } catch (error) {
       database.exec("ROLLBACK");
       throw error;
@@ -465,6 +505,57 @@ export const initializeDatabase = (database: OpenCoiDatabase): void => {
         PRAGMA user_version = 2;
       `);
       database.exec("COMMIT");
+      version = 2;
+    } catch (error) {
+      database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+  if (version === 2) {
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      database.exec(`
+        CREATE TABLE oidc_identities (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL,
+          issuer TEXT NOT NULL,
+          subject TEXT NOT NULL,
+          user_id TEXT NOT NULL,
+          email_at_binding TEXT COLLATE NOCASE,
+          created_at TEXT NOT NULL,
+          last_login_at TEXT NOT NULL,
+          UNIQUE (organization_id, id),
+          UNIQUE (organization_id, issuer, subject),
+          UNIQUE (organization_id, issuer, user_id),
+          FOREIGN KEY (organization_id, user_id)
+            REFERENCES users(organization_id, id) ON DELETE CASCADE,
+          CHECK (length(issuer) BETWEEN 1 AND 2048),
+          CHECK (length(subject) BETWEEN 1 AND 512)
+        ) STRICT;
+        CREATE TABLE oidc_login_transactions (
+          id TEXT PRIMARY KEY,
+          organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+          issuer TEXT NOT NULL,
+          transaction_token_hash TEXT NOT NULL UNIQUE,
+          state_hash TEXT NOT NULL,
+          code_verifier TEXT NOT NULL,
+          nonce TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          consumed_at TEXT,
+          created_at TEXT NOT NULL,
+          UNIQUE (organization_id, id),
+          CHECK (length(transaction_token_hash) = 64),
+          CHECK (length(state_hash) = 64),
+          CHECK (length(code_verifier) BETWEEN 43 AND 256),
+          CHECK (length(nonce) BETWEEN 32 AND 256)
+        ) STRICT;
+        CREATE INDEX oidc_transactions_active_idx
+          ON oidc_login_transactions (organization_id, transaction_token_hash, expires_at)
+          WHERE consumed_at IS NULL;
+        PRAGMA user_version = 3;
+      `);
+      database.exec("COMMIT");
+      version = 3;
     } catch (error) {
       database.exec("ROLLBACK");
       throw error;
@@ -551,6 +642,30 @@ export interface SessionRow {
   revoked_at: string | null;
   ip_address: string | null;
   user_agent: string | null;
+}
+
+export interface OidcIdentityRow {
+  id: string;
+  organization_id: string;
+  issuer: string;
+  subject: string;
+  user_id: string;
+  email_at_binding: string | null;
+  created_at: string;
+  last_login_at: string;
+}
+
+export interface OidcLoginTransactionRow {
+  id: string;
+  organization_id: string;
+  issuer: string;
+  transaction_token_hash: string;
+  state_hash: string;
+  code_verifier: string;
+  nonce: string;
+  expires_at: string;
+  consumed_at: string | null;
+  created_at: string;
 }
 
 export interface UploadLinkRow {
@@ -930,6 +1045,138 @@ export class OrganizationRepository {
       .prepare("DELETE FROM sessions WHERE organization_id = ? AND expires_at <= ?")
       .run(this.organizationId, at);
     return Number(result.changes);
+  }
+
+  createOidcLoginTransaction(input: {
+    id?: string;
+    issuer: string;
+    transactionTokenHash: string;
+    stateHash: string;
+    codeVerifier: string;
+    nonce: string;
+    expiresAt: string;
+    createdAt?: string;
+  }): OidcLoginTransactionRow {
+    const id = input.id ?? newId();
+    const createdAt = input.createdAt ?? nowIso();
+    this.#database
+      .prepare(
+        `INSERT INTO oidc_login_transactions
+          (id, organization_id, issuer, transaction_token_hash, state_hash,
+           code_verifier, nonce, expires_at, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        this.organizationId,
+        input.issuer,
+        input.transactionTokenHash,
+        input.stateHash,
+        input.codeVerifier,
+        input.nonce,
+        input.expiresAt,
+        createdAt,
+      );
+    return this.#database
+      .prepare("SELECT * FROM oidc_login_transactions WHERE organization_id = ? AND id = ?")
+      .get(this.organizationId, id) as unknown as OidcLoginTransactionRow;
+  }
+
+  getActiveOidcLoginTransaction(
+    transactionTokenHash: string,
+    at = nowIso(),
+  ): OidcLoginTransactionRow | null {
+    return castRow<OidcLoginTransactionRow>(
+      this.#database
+        .prepare(
+          `SELECT * FROM oidc_login_transactions
+           WHERE organization_id = ? AND transaction_token_hash = ?
+             AND consumed_at IS NULL AND expires_at > ?`,
+        )
+        .get(this.organizationId, transactionTokenHash, at),
+    );
+  }
+
+  consumeOidcLoginTransaction(id: string, at = nowIso()): boolean {
+    const result = this.#database
+      .prepare(
+        `UPDATE oidc_login_transactions SET consumed_at = ?
+         WHERE organization_id = ? AND id = ? AND consumed_at IS NULL AND expires_at > ?`,
+      )
+      .run(at, this.organizationId, id, at);
+    return Number(result.changes) === 1;
+  }
+
+  deleteExpiredOidcLoginTransactions(at = nowIso()): number {
+    const result = this.#database
+      .prepare(
+        `DELETE FROM oidc_login_transactions
+         WHERE organization_id = ? AND expires_at <= ?`,
+      )
+      .run(this.organizationId, at);
+    return Number(result.changes);
+  }
+
+  getUserByOidcIdentity(issuer: string, subject: string): UserRow | null {
+    return castRow<UserRow>(
+      this.#database
+        .prepare(
+          `SELECT u.* FROM oidc_identities i
+           JOIN users u ON u.organization_id = i.organization_id AND u.id = i.user_id
+           WHERE i.organization_id = ? AND i.issuer = ? AND i.subject = ?`,
+        )
+        .get(this.organizationId, issuer, subject),
+    );
+  }
+
+  getOidcIdentityForUser(issuer: string, userId: string): OidcIdentityRow | null {
+    return castRow<OidcIdentityRow>(
+      this.#database
+        .prepare(
+          `SELECT * FROM oidc_identities
+           WHERE organization_id = ? AND issuer = ? AND user_id = ?`,
+        )
+        .get(this.organizationId, issuer, userId),
+    );
+  }
+
+  bindOidcIdentity(input: {
+    id?: string;
+    issuer: string;
+    subject: string;
+    userId: string;
+    email?: string;
+    at?: string;
+  }): boolean {
+    const at = input.at ?? nowIso();
+    const result = this.#database
+      .prepare(
+        `INSERT OR IGNORE INTO oidc_identities
+          (id, organization_id, issuer, subject, user_id, email_at_binding,
+           created_at, last_login_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.id ?? newId(),
+        this.organizationId,
+        input.issuer,
+        input.subject,
+        input.userId,
+        input.email?.trim().toLowerCase() ?? null,
+        at,
+        at,
+      );
+    return Number(result.changes) === 1;
+  }
+
+  touchOidcIdentity(issuer: string, subject: string, at = nowIso()): boolean {
+    const result = this.#database
+      .prepare(
+        `UPDATE oidc_identities SET last_login_at = ?
+         WHERE organization_id = ? AND issuer = ? AND subject = ?`,
+      )
+      .run(at, this.organizationId, issuer, subject);
+    return Number(result.changes) === 1;
   }
 
   createVendorType(input: { id?: string; name: string; description?: string }): VendorTypeRow {

@@ -1,4 +1,4 @@
-import type { CoverageType, LimitType } from "@shared/domain";
+import type { CoverageType, EvidenceField, LimitType } from "@shared/domain";
 import { parseCoiText } from "@shared/ocr";
 import {
   Check,
@@ -80,6 +80,30 @@ interface CertificateDraft {
   certificateHolder: string;
   policies: PolicyDraft[];
   endorsements: EndorsementDraft[];
+  provenance: ExtractionProvenance[];
+}
+
+export interface ExtractionProvenance {
+  field:
+    | "NAMED_INSURED"
+    | "CERTIFICATE_HOLDER"
+    | "COVERAGE_TYPE"
+    | "INSURER_NAME"
+    | "POLICY_NUMBER"
+    | "EFFECTIVE_DATE"
+    | "EXPIRATION_DATE"
+    | "LIMIT"
+    | "ENDORSEMENT_NAME"
+    | "ENDORSEMENT_FORM_CODE"
+    | "ENDORSEMENT_EVIDENCE_LEVEL";
+  extractedValue: string | number;
+  policyIndex?: number;
+  endorsementIndex?: number;
+  limitType?: LimitType;
+  source: "OCR";
+  confidenceBps?: number;
+  rawText: string;
+  page: number;
 }
 
 export interface IntakeSubmission {
@@ -92,6 +116,7 @@ export interface IntakeSubmission {
   issueDate: string | null;
   producer: string | null;
   certificateHolder: string | null;
+  provenance: ExtractionProvenance[];
   policies: Array<{
     coverageType: CoverageType;
     insurer: string | null;
@@ -145,19 +170,40 @@ function defaultAggregateLimitType(coverageType: CoverageType): LimitType {
 }
 
 function firstLimit(
-  limits: Partial<Record<LimitType, { value: number }>>,
+  limits: Partial<Record<LimitType, EvidenceField<number>>>,
   types: LimitType[],
   fallbackType: LimitType,
 ) {
   const type = types.find((candidate) => limits[candidate]?.value !== undefined) ?? fallbackType;
-  return { type, value: limits[type]?.value };
+  return { type, value: limits[type]?.value, evidence: limits[type] };
 }
 
 function draftFromExtraction(result: BrowserExtractionResult): CertificateDraft {
   const parsed = parseCoiText(result.rawText, { documentId: crypto.randomUUID() });
   const normalized = parsed.normalizedText;
-  const insurerFallback = parsed.candidates.insurerNames[0]?.value ?? "";
-  const policies: PolicyDraft[] = parsed.document.policies.map((policy) => {
+  const insurerFallbackField = parsed.candidates.insurerNames[0];
+  const insurerFallback = insurerFallbackField?.value ?? "";
+  const provenance: ExtractionProvenance[] = [];
+  const record = (
+    field: ExtractionProvenance["field"],
+    evidence: EvidenceField<unknown> | undefined,
+    qualifiers: Pick<ExtractionProvenance, "policyIndex" | "endorsementIndex" | "limitType"> = {},
+  ) => {
+    if (evidence?.source !== "OCR" || !evidence.rawText || !evidence.page) return;
+    if (typeof evidence.value !== "string" && typeof evidence.value !== "number") return;
+    provenance.push({
+      field,
+      extractedValue: evidence.value,
+      source: "OCR",
+      ...(evidence.confidenceBps === undefined ? {} : { confidenceBps: evidence.confidenceBps }),
+      rawText: evidence.rawText,
+      page: evidence.page,
+      ...qualifiers,
+    });
+  };
+  record("NAMED_INSURED", parsed.document.namedInsured);
+  record("CERTIFICATE_HOLDER", parsed.document.certificateHolder);
+  const policies: PolicyDraft[] = parsed.document.policies.map((policy, policyIndex) => {
     const occurrence = firstLimit(
       policy.limits,
       ["EACH_OCCURRENCE", "COMBINED_SINGLE_LIMIT", "EACH_ACCIDENT", "EACH_CLAIM"],
@@ -168,6 +214,15 @@ function draftFromExtraction(result: BrowserExtractionResult): CertificateDraft 
       ["GENERAL_AGGREGATE", "AGGREGATE", "PRODUCTS_COMPLETED_OPERATIONS_AGGREGATE"],
       defaultAggregateLimitType(policy.coverageType.value),
     );
+    record("COVERAGE_TYPE", policy.coverageType, { policyIndex });
+    record("INSURER_NAME", policy.insurerName ?? insurerFallbackField, { policyIndex });
+    record("POLICY_NUMBER", policy.policyNumber, { policyIndex });
+    record("EFFECTIVE_DATE", policy.effectiveDate, { policyIndex });
+    record("EXPIRATION_DATE", policy.expirationDate, { policyIndex });
+    record("LIMIT", occurrence.evidence, { policyIndex, limitType: occurrence.type });
+    if (aggregate.type !== occurrence.type) {
+      record("LIMIT", aggregate.evidence, { policyIndex, limitType: aggregate.type });
+    }
     return {
       id: policy.id,
       coverageType: policy.coverageType.value,
@@ -191,17 +246,38 @@ function draftFromExtraction(result: BrowserExtractionResult): CertificateDraft 
     };
   });
 
+  const endorsements = parsed.document.endorsements.map((endorsement, endorsementIndex) => {
+    record("ENDORSEMENT_NAME", endorsement.name, { endorsementIndex });
+    record("ENDORSEMENT_FORM_CODE", endorsement.formCode, { endorsementIndex });
+    record("ENDORSEMENT_EVIDENCE_LEVEL", endorsement.evidenceLevel, { endorsementIndex });
+    return {
+      id: endorsement.id,
+      name: endorsement.name?.value ?? "",
+      formCode: endorsement.formCode?.value ?? "",
+      evidenceLevel:
+        endorsement.evidenceLevel.value === "HUMAN_VERIFIED"
+          ? ("HUMAN_VERIFIED" as const)
+          : endorsement.evidenceLevel.value === "ATTACHED" ||
+              endorsement.evidenceLevel.value === "SCHEDULED"
+            ? ("ATTACHED" as const)
+            : endorsement.evidenceLevel.value === "NONE"
+              ? ("NONE" as const)
+              : ("MENTIONED" as const),
+    };
+  });
+
   return {
-    namedInsured: firstMatch(
-      normalized,
-      /^(?:NAMED\s+INSURED|INSURED)(?!\s*\(S\))\s*[:#-]\s*(.+)$/im,
-    ),
+    namedInsured:
+      parsed.document.namedInsured?.value ??
+      firstMatch(normalized, /^(?:NAMED\s+INSURED|INSURED)(?!\s*\(S\))\s*[:#-]\s*(.+)$/im),
     issueDate: firstMatch(
       normalized,
       /^(?:DATE\s+(?:ISSUED|OF\s+ISSUE)|ISSUE\s+DATE)\s*[:#-]?\s*(\d{1,4}[./-]\d{1,2}[./-]\d{1,4})/im,
     ),
     producer: firstMatch(normalized, /^(?:PRODUCER|BROKER)\s*[:#-]\s*(.+)$/im),
-    certificateHolder: firstMatch(normalized, /^CERTIFICATE\s+HOLDER\s*[:#-]\s*(.+)$/im),
+    certificateHolder:
+      parsed.document.certificateHolder?.value ??
+      firstMatch(normalized, /^CERTIFICATE\s+HOLDER\s*[:#-]\s*(.+)$/im),
     policies:
       policies.length > 0
         ? policies
@@ -222,20 +298,8 @@ function draftFromExtraction(result: BrowserExtractionResult): CertificateDraft 
               primaryNoncontributory: "NONE",
             },
           ],
-    endorsements: parsed.document.endorsements.map((endorsement) => ({
-      id: endorsement.id,
-      name: endorsement.name?.value ?? "",
-      formCode: endorsement.formCode?.value ?? "",
-      evidenceLevel:
-        endorsement.evidenceLevel.value === "HUMAN_VERIFIED"
-          ? "HUMAN_VERIFIED"
-          : endorsement.evidenceLevel.value === "ATTACHED" ||
-              endorsement.evidenceLevel.value === "SCHEDULED"
-            ? "ATTACHED"
-            : endorsement.evidenceLevel.value === "NONE"
-              ? "NONE"
-              : "MENTIONED",
-    })),
+    endorsements,
+    provenance,
   };
 }
 
@@ -316,7 +380,7 @@ export function DocumentIntake({
   };
 
   const updateDraft = (
-    field: keyof Omit<CertificateDraft, "policies" | "endorsements">,
+    field: keyof Omit<CertificateDraft, "policies" | "endorsements" | "provenance">,
     value: string,
   ) => {
     setDraft((current) => (current ? { ...current, [field]: value } : current));
@@ -461,6 +525,7 @@ export function DocumentIntake({
       issueDate: draft.issueDate || null,
       producer: draft.producer.trim() || null,
       certificateHolder: draft.certificateHolder.trim() || null,
+      provenance: draft.provenance,
       policies: draft.policies.map((policy, policyIndex) => {
         const limits: Partial<Record<LimitType, number>> = {};
         const occurrence = toMinorUnits(policy.eachOccurrence);
@@ -587,6 +652,8 @@ export function DocumentIntake({
             className="sr-only"
             type="file"
             accept="application/pdf,.pdf"
+            aria-label="Certificate PDF file"
+            tabIndex={-1}
             onChange={chooseFile}
           />
           <div className="drop-zone__icon">

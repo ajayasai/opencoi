@@ -4,13 +4,18 @@ import type {
   CertificateRecord,
   DashboardData,
   ExceptionRecord,
+  OidcStatus,
   PublicUploadContext,
   ReminderRecord,
   ReminderRunResult,
+  ServiceAccountRecord,
+  ServiceAccountScope,
   SessionUser,
   VendorDetail,
   VendorSummary,
   VendorType,
+  WebhookDeliveryRecord,
+  WebhookEndpointRecord,
 } from "./types";
 
 let csrfToken = "";
@@ -85,6 +90,13 @@ export const api = {
     csrfToken = "";
   },
 
+  oidcStatus: () => request<OidcStatus>("/api/auth/oidc/config"),
+  beginOidcLogin: () =>
+    request<{ authorizationUrl: string; expiresAt: string }>("/api/auth/oidc/start", {
+      method: "POST",
+      body: "{}",
+    }),
+
   dashboard: () => request<DashboardData>("/api/dashboard"),
   vendors: (query = "") => request<VendorSummary[]>(`/api/vendors${query ? `?${query}` : ""}`),
   vendor: (id: string) => request<VendorDetail>(`/api/vendors/${id}`),
@@ -151,6 +163,62 @@ export const api = {
   reminders: () => request<ReminderRecord[]>("/api/reminders"),
   runReminders: () =>
     request<ReminderRunResult>("/api/reminders/run", {
+      method: "POST",
+      body: "{}",
+    }),
+
+  serviceAccounts: () => request<ServiceAccountRecord[]>("/api/integrations/service-accounts"),
+  createServiceAccount: (input: {
+    name: string;
+    description?: string | null;
+    scopes: ServiceAccountScope[];
+    secretExpiresAt?: string | null;
+  }) =>
+    request<{
+      account: ServiceAccountRecord;
+      secret: { id: string; token: string; tokenPrefix: string; expiresAt: string | null };
+      warning: string;
+    }>("/api/integrations/service-accounts", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  rotateServiceAccount: (accountId: string) =>
+    request<{
+      secret: { id: string; token: string; tokenPrefix: string; expiresAt: string | null };
+      warning: string;
+    }>(`/api/integrations/service-accounts/${accountId}/rotate`, {
+      method: "POST",
+      body: "{}",
+    }),
+  setServiceAccountStatus: (accountId: string, status: "active" | "disabled") =>
+    request<void>(`/api/integrations/service-accounts/${accountId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  revokeServiceAccountSecret: (accountId: string, secretId: string) =>
+    request<void>(`/api/integrations/service-accounts/${accountId}/secrets/${secretId}/revoke`, {
+      method: "POST",
+      body: "{}",
+    }),
+  webhooks: () =>
+    request<{
+      endpoints: WebhookEndpointRecord[];
+      deliveries: WebhookDeliveryRecord[];
+      configured: boolean;
+    }>("/api/integrations/webhooks"),
+  createWebhook: (input: { url: string; description?: string | null; eventTypes: string[] }) =>
+    request<{
+      endpoint: WebhookEndpointRecord;
+      signingSecret: string;
+      warning: string;
+    }>("/api/integrations/webhooks", { method: "POST", body: JSON.stringify(input) }),
+  setWebhookStatus: (endpointId: string, status: "active" | "disabled") =>
+    request<void>(`/api/integrations/webhooks/${endpointId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    }),
+  replayWebhookDelivery: (deliveryId: string) =>
+    request<{ status: "pending" }>(`/api/integrations/webhook-deliveries/${deliveryId}/replay`, {
       method: "POST",
       body: "{}",
     }),

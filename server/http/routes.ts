@@ -5,6 +5,7 @@ import multer from "multer";
 import { z } from "zod";
 import { buildComplianceStatusCsv } from "../../shared/csv.js";
 import { appendAuditEvent, listAuditEvents, verifyAuditChain } from "../audit.js";
+import type { OidcProtocol } from "../auth/oidc.js";
 import type { AppConfig } from "../config.js";
 import type { OpenCoiDatabase, UserRow } from "../db.js";
 import { createOrganizationRepository } from "../db.js";
@@ -23,6 +24,7 @@ import {
   normalizeCoverageType,
   rejectStoredCertificate,
 } from "../services/certificates.js";
+import { publishDomainEvent } from "../services/domainEvents.js";
 import {
   certificateView,
   dashboardView,
@@ -48,12 +50,14 @@ import {
   requireRole,
   sessionCookieOptions,
 } from "./middleware.js";
+import { createOidcRouter } from "./oidcRoutes.js";
 
 export interface ApiDependencies {
   config: AppConfig;
   database: OpenCoiDatabase;
   documentStore: DocumentStore;
   now?: () => Date;
+  oidcProtocol?: OidcProtocol;
 }
 
 const text = (maximum: number) => z.string().trim().min(1).max(maximum);
@@ -267,6 +271,16 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
   const now = (): Date => dependencies.now?.() ?? new Date();
   const trustedOrigin = enforceTrustedOrigin(dependencies.config);
   const pdfUpload = upload(dependencies.config);
+
+  router.use(
+    "/auth/oidc",
+    createOidcRouter({
+      config: dependencies.config,
+      database: dependencies.database,
+      protocol: dependencies.oidcProtocol,
+      now: dependencies.now,
+    }),
+  );
 
   router.post(
     "/auth/login",
@@ -937,6 +951,28 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
     response.send(bytes);
   });
   router.get("/certificates/:id/download", download);
+  router.get(
+    "/certificates/:id/view",
+    asyncRoute(async (request, response) => {
+      const auth = authContext(response);
+      const document = documentForDownload(
+        dependencies.database,
+        auth.user.organization_id,
+        request.params.id as string,
+      );
+      if (!document) throw new HttpError(404, "Certificate not found");
+      const bytes = await dependencies.documentStore.get(document.storage_key);
+      response.setHeader("Content-Type", "application/pdf");
+      response.setHeader("Content-Length", String(bytes.byteLength));
+      response.setHeader(
+        "Content-Disposition",
+        attachmentContentDisposition(document.original_filename).replace(/^attachment/, "inline"),
+      );
+      response.setHeader("Cache-Control", "private, no-store");
+      response.setHeader("X-Content-Type-Options", "nosniff");
+      response.send(bytes);
+    }),
+  );
 
   router.post(
     "/vendors/:id/upload-links",
@@ -1062,15 +1098,32 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
         "Only an open failed finding on a confirmed certificate can be excepted",
       );
     }
-    const id = repository.createException({
-      vendorId: input.vendorId,
-      findingId: input.findingId,
-      requestedByUserId: auth.user.id,
-      requestReason: JSON.stringify({
-        reason: input.reason,
-        compensatingControls: input.compensatingControls ?? null,
-      }),
-      expiresAt: input.expiresAt,
+    const id = repository.transaction((transactionRepository) => {
+      const exceptionId = transactionRepository.createException({
+        vendorId: input.vendorId,
+        findingId: input.findingId,
+        requestedByUserId: auth.user.id,
+        requestReason: JSON.stringify({
+          reason: input.reason,
+          compensatingControls: input.compensatingControls ?? null,
+        }),
+        expiresAt: input.expiresAt,
+      });
+      publishDomainEvent(dependencies.database, {
+        organizationId: transactionRepository.organizationId,
+        type: "exception.requested",
+        resourceType: "exception",
+        resourceId: exceptionId,
+        data: {
+          vendorId: input.vendorId,
+          findingId: input.findingId,
+          expiresAt: input.expiresAt,
+        },
+        actorType: "user",
+        actorId: auth.user.id,
+        at: now().toISOString(),
+      });
+      return exceptionId;
     });
     audit(dependencies, request, response, {
       action: "exception.requested",
@@ -1105,17 +1158,33 @@ export const createApiRouter = (dependencies: ApiDependencies): Router => {
       now(),
     );
     if (!existing) throw new HttpError(404, "Exception not found");
-    if (
-      !repository.decideException({
-        id: existing.id,
-        status: input.decision,
-        decidedByUserId: auth.user.id,
-        decisionNote: input.decisionReason,
-        expiresAt: input.expiresAt,
-      })
-    ) {
-      throw new HttpError(409, "Exception cannot be changed from its current status");
-    }
+    repository.transaction((transactionRepository) => {
+      if (
+        !transactionRepository.decideException({
+          id: existing.id,
+          status: input.decision,
+          decidedByUserId: auth.user.id,
+          decisionNote: input.decisionReason,
+          expiresAt: input.expiresAt,
+        })
+      ) {
+        throw new HttpError(409, "Exception cannot be changed from its current status");
+      }
+      publishDomainEvent(dependencies.database, {
+        organizationId: transactionRepository.organizationId,
+        type: `exception.${input.decision}`,
+        resourceType: "exception",
+        resourceId: existing.id,
+        data: {
+          vendorId: existing.vendorId,
+          findingId: existing.findingId,
+          expiresAt: input.expiresAt ?? existing.expiresAt,
+        },
+        actorType: "user",
+        actorId: auth.user.id,
+        at: now().toISOString(),
+      });
+    });
     audit(dependencies, request, response, {
       action: `exception.${input.decision}`,
       entityType: "exception",

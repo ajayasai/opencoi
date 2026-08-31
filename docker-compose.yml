@@ -30,6 +30,13 @@ services:
       SESSION_TTL_HOURS: "${SESSION_TTL_HOURS:-12}"
       UPLOAD_LINK_TTL_DAYS: "${UPLOAD_LINK_TTL_DAYS:-14}"
       TOKEN_PEPPER: "${TOKEN_PEPPER:-}"
+      OIDC_ISSUER: "${OIDC_ISSUER:-}"
+      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
+      OIDC_ORGANIZATION_SLUG: "${OIDC_ORGANIZATION_SLUG:-}"
+      OIDC_CLIENT_AUTH_METHOD: "${OIDC_CLIENT_AUTH_METHOD:-client_secret_basic}"
+      OIDC_DISPLAY_NAME: "${OIDC_DISPLAY_NAME:-Single sign-on}"
+      OIDC_TRANSACTION_TTL_MINUTES: "${OIDC_TRANSACTION_TTL_MINUTES:-10}"
       BOOTSTRAP_ORG_NAME: "${BOOTSTRAP_ORG_NAME:-}"
       BOOTSTRAP_ORG_SLUG: "${BOOTSTRAP_ORG_SLUG:-}"
       BOOTSTRAP_ADMIN_NAME: "${BOOTSTRAP_ADMIN_NAME:-}"
@@ -57,6 +64,47 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  webhook-worker:
+    image: opencoi:local
+    profiles: ["webhooks"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    command:
+      - node
+      - --enable-source-maps
+      - dist/server/cli/run-webhooks.js
+      - --watch
+    environment:
+      NODE_ENV: production
+      PORT: 4174
+      TRUST_PROXY_HOPS: "${TRUST_PROXY_HOPS:-0}"
+      APP_ORIGIN: "${OPENCOI_APP_ORIGIN:-http://localhost:4174}"
+      COOKIE_SECURE: "${COOKIE_SECURE:-false}"
+      DATA_DIR: /app/data
+      DATABASE_PATH: /app/data/opencoi.sqlite
+      UPLOAD_DIR: /app/data/uploads
+      TOKEN_PEPPER: "${TOKEN_PEPPER:-}"
+      WEBHOOK_POLL_SECONDS: "${WEBHOOK_POLL_SECONDS:-15}"
+    volumes:
+      - opencoi-data:/app/data
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    depends_on:
+      opencoi:
+        condition: service_healthy
     stop_grace_period: 30s
     logging:
       driver: json-file

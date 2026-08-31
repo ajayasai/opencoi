@@ -24,6 +24,8 @@ export interface CoiOcrWarning {
 
 export interface CoiOcrCandidates {
   readonly insurerNames: readonly EvidenceField<string>[];
+  readonly namedInsuredNames: readonly EvidenceField<string>[];
+  readonly certificateHolderNames: readonly EvidenceField<string>[];
   readonly policyNumbers: readonly EvidenceField<string>[];
   readonly dates: readonly EvidenceField<IsoDate>[];
 }
@@ -100,6 +102,12 @@ const LIMIT_PATTERNS: readonly { readonly type: LimitType; readonly pattern: Reg
 ];
 
 const DATE_TOKEN_PATTERN = /\b(?:\d{4}[./-]\d{1,2}[./-]\d{1,2}|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/g;
+const PAGE_MARKER_PATTERN = /^---\s*Page\s+(\d+)\s*---$/i;
+
+interface PageAwareLine {
+  readonly text: string;
+  readonly page: number;
+}
 
 /** Normalizes OCR typography without changing line boundaries or semantic text. */
 export function normalizeOcrText(text: string): string {
@@ -242,9 +250,76 @@ export function parseInsurerNameFromLine(line: string): string | null {
   return value.length >= 2 ? value : null;
 }
 
+export function parseNamedInsuredFromLine(line: string): string | null {
+  const match = /^(?:NAMED\s+INSURED|INSURED(?:\s+NAME)?)\s*[:#-]\s*(.+)$/i.exec(line.trim());
+  return match ? plausiblePartyName(match[1] ?? "") : null;
+}
+
+export function parseCertificateHolderFromLine(line: string): string | null {
+  const match = /^CERTIFICATE\s+HOLDER(?:\s+NAME)?\s*[:#-]\s*(.+)$/i.exec(line.trim());
+  return match ? plausiblePartyName(match[1] ?? "") : null;
+}
+
+function plausiblePartyName(value: string): string | null {
+  const normalized = value.replace(/[\t ]+/g, " ").trim();
+  if (
+    normalized.length < 2 ||
+    normalized.length > 500 ||
+    /^(?:N\/?A|NONE|UNKNOWN|NOT\s+AVAILABLE)$/i.test(normalized) ||
+    /^(?:PRODUCER|INSURER(?:\(S\))?|POLICY\s+(?:NUMBER|EFF|EXP)|CERTIFICATE\s+(?:HOLDER|OF\s+LIABILITY)|NAMED\s+INSURED|DESCRIPTION\s+OF\s+OPERATIONS|COVERAGES?|LIMITS)\b/i.test(
+      normalized,
+    ) ||
+    COVERAGE_PATTERNS.some((coverage) => coverage.pattern.test(normalized))
+  ) {
+    return null;
+  }
+  return normalized;
+}
+
+/**
+ * Converts the production browser envelope into semantic lines. Inputs without
+ * page markers remain supported and are treated as a single page.
+ */
+function pageAwareLines(normalizedText: string): readonly PageAwareLine[] {
+  if (!normalizedText) return [];
+  const result: PageAwareLine[] = [];
+  let page = 1;
+  for (const text of normalizedText.split("\n")) {
+    const marker = PAGE_MARKER_PATTERN.exec(text);
+    if (marker) {
+      const candidate = Number(marker[1]);
+      if (Number.isSafeInteger(candidate) && candidate > 0) page = candidate;
+      continue;
+    }
+    if (text) result.push({ text, page });
+  }
+  return result;
+}
+
+function parsePartyCandidates(
+  lines: readonly PageAwareLine[],
+  parseSameLine: (line: string) => string | null,
+  standaloneLabel: RegExp,
+): readonly EvidenceField<string>[] {
+  const candidates: EvidenceField<string>[] = [];
+  lines.forEach((line, index) => {
+    const sameLine = parseSameLine(line.text);
+    if (sameLine) {
+      candidates.push(ocrField(sameLine, line, 8_600));
+      return;
+    }
+    if (!standaloneLabel.test(line.text)) return;
+    const nextLine = lines[index + 1];
+    if (!nextLine || nextLine.page !== line.page) return;
+    const nextLineValue = plausiblePartyName(nextLine.text);
+    if (nextLineValue) candidates.push(ocrField(nextLineValue, nextLine, 7_800));
+  });
+  return uniqueFields(candidates);
+}
+
 export function parseCoiText(text: string, options: ParseCoiTextOptions = {}): CoiOcrExtraction {
   const normalizedText = normalizeOcrText(text);
-  const lines = normalizedText ? normalizedText.split("\n") : [];
+  const lines = pageAwareLines(normalizedText);
   const documentId = options.documentId?.trim() || "ocr-document";
   const fractionDigits = options.currencyFractionDigits ?? 2;
   // Validate even when the document contains no money values.
@@ -252,22 +327,34 @@ export function parseCoiText(text: string, options: ParseCoiTextOptions = {}): C
 
   const insurerNames = uniqueFields(
     lines
-      .map((line) => ({ value: parseInsurerNameFromLine(line), rawText: line }))
-      .filter((candidate): candidate is { value: string; rawText: string } =>
+      .map((line) => ({ value: parseInsurerNameFromLine(line.text), line }))
+      .filter((candidate): candidate is { value: string; line: PageAwareLine } =>
         Boolean(candidate.value),
       )
-      .map((candidate) => ocrField(candidate.value, candidate.rawText, 8_800)),
+      .map((candidate) => ocrField(candidate.value, candidate.line, 8_800)),
+  );
+  const namedInsuredNames = parsePartyCandidates(
+    lines,
+    parseNamedInsuredFromLine,
+    /^(?:NAMED\s+INSURED|INSURED(?:\s+NAME)?)\s*:?$/i,
+  );
+  const certificateHolderNames = parsePartyCandidates(
+    lines,
+    parseCertificateHolderFromLine,
+    /^CERTIFICATE\s+HOLDER(?:\s+NAME)?\s*:?$/i,
   );
   const allPolicyNumbers = uniqueFields(
     lines
-      .map((line) => ({ value: parsePolicyNumberFromLine(line), rawText: line }))
-      .filter((candidate): candidate is { value: string; rawText: string } =>
+      .map((line) => ({ value: parsePolicyNumberFromLine(line.text), line }))
+      .filter((candidate): candidate is { value: string; line: PageAwareLine } =>
         Boolean(candidate.value),
       )
-      .map((candidate) => ocrField(candidate.value, candidate.rawText, 8_500)),
+      .map((candidate) => ocrField(candidate.value, candidate.line, 8_500)),
   );
   const allDates = uniqueFields(
-    lines.flatMap((line) => findDateCandidates(line).map((value) => ocrField(value, line, 8_700))),
+    lines.flatMap((line) =>
+      findDateCandidates(line.text).map((value) => ocrField(value, line, 8_700)),
+    ),
   );
 
   const markers = findCoverageMarkers(lines);
@@ -295,7 +382,7 @@ export function parseCoiText(text: string, options: ParseCoiTextOptions = {}): C
         {
           type: "OTHER" as CoverageType,
           lineIndex: 0,
-          heading: lines[0] ?? "Unclassified coverage",
+          heading: lines[0] ?? { text: "Unclassified coverage", page: 1 },
           lines,
         },
       ];
@@ -341,11 +428,15 @@ export function parseCoiText(text: string, options: ParseCoiTextOptions = {}): C
     document: {
       id: documentId,
       reviewStatus: "UNCONFIRMED",
+      ...(namedInsuredNames[0] ? { namedInsured: namedInsuredNames[0] } : {}),
+      ...(certificateHolderNames[0] ? { certificateHolder: certificateHolderNames[0] } : {}),
       policies,
       endorsements: parseEndorsements(lines),
     },
     candidates: {
       insurerNames,
+      namedInsuredNames,
+      certificateHolderNames,
       policyNumbers: allPolicyNumbers,
       dates: allDates,
     },
@@ -357,14 +448,14 @@ export function parseCoiText(text: string, options: ParseCoiTextOptions = {}): C
 /** Compatibility-oriented name for callers that think of OCR as field extraction. */
 export const extractCoiFields = parseCoiText;
 
-function findCoverageMarkers(lines: readonly string[]): readonly {
+function findCoverageMarkers(lines: readonly PageAwareLine[]): readonly {
   readonly type: CoverageType;
   readonly lineIndex: number;
-  readonly heading: string;
+  readonly heading: PageAwareLine;
 }[] {
-  const markers: { type: CoverageType; lineIndex: number; heading: string }[] = [];
+  const markers: { type: CoverageType; lineIndex: number; heading: PageAwareLine }[] = [];
   lines.forEach((line, lineIndex) => {
-    const match = COVERAGE_PATTERNS.find((candidate) => candidate.pattern.test(line));
+    const match = COVERAGE_PATTERNS.find((candidate) => candidate.pattern.test(line.text));
     if (!match) return;
     const previous = markers.at(-1);
     // ACORD headings sometimes span or repeat on adjacent OCR lines.
@@ -376,17 +467,17 @@ function findCoverageMarkers(lines: readonly string[]): readonly {
 
 function parsePolicySegment(
   coverageType: CoverageType,
-  heading: string,
-  lines: readonly string[],
+  heading: PageAwareLine,
+  lines: readonly PageAwareLine[],
   id: string,
   insurerCandidates: readonly EvidenceField<string>[],
   fractionDigits: number,
 ): CoiPolicyFacts {
   const labelledPolicyNumber = lines
-    .map(parsePolicyNumberFromLine)
+    .map((line) => parsePolicyNumberFromLine(line.text))
     .find((value): value is string => value !== null);
   const datesByLine = lines
-    .map((line) => ({ line, dates: findDateCandidates(line) }))
+    .map((line) => ({ line, dates: findDateCandidates(line.text) }))
     .filter((candidate) => candidate.dates.length > 0);
   const labelledEffective = findLabelledDate(
     lines,
@@ -411,9 +502,9 @@ function parsePolicySegment(
 
   const limits: Partial<Record<LimitType, EvidenceField<MoneyMinor>>> = {};
   for (const line of lines) {
-    const definition = LIMIT_PATTERNS.find((candidate) => candidate.pattern.test(line));
+    const definition = LIMIT_PATTERNS.find((candidate) => candidate.pattern.test(line.text));
     if (!definition || limits[definition.type]) continue;
-    const amount = extractMoneyFromLine(line, fractionDigits);
+    const amount = extractMoneyFromLine(line.text, fractionDigits);
     if (amount !== null) limits[definition.type] = ocrField(amount, line, 8_900);
   }
 
@@ -434,7 +525,7 @@ function parsePolicySegment(
       ? {
           effectiveDate: ocrField(
             effectiveDate,
-            effectiveSource?.line ?? String(effectiveDate),
+            effectiveSource?.line ?? { text: String(effectiveDate), page: heading.page },
             8_700,
           ),
         }
@@ -443,7 +534,7 @@ function parsePolicySegment(
       ? {
           expirationDate: ocrField(
             expirationDate,
-            expirationSource?.line ?? String(expirationDate),
+            expirationSource?.line ?? { text: String(expirationDate), page: heading.page },
             8_700,
           ),
         }
@@ -453,19 +544,19 @@ function parsePolicySegment(
 }
 
 function findLabelledDate(
-  lines: readonly string[],
+  lines: readonly PageAwareLine[],
   label: RegExp,
   position: "FIRST" | "LAST",
 ): IsoDate | undefined {
   for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index] ?? "";
-    if (!label.test(line)) continue;
-    const sameLineDates = findDateCandidates(line);
+    const line = lines[index];
+    if (!line || !label.test(line.text)) continue;
+    const sameLineDates = findDateCandidates(line.text);
     const sameLine = position === "FIRST" ? sameLineDates[0] : sameLineDates.at(-1);
     if (sameLine) return sameLine;
     const nextLine = lines[index + 1];
     if (nextLine) {
-      const nextLineDates = findDateCandidates(nextLine);
+      const nextLineDates = findDateCandidates(nextLine.text);
       const next = position === "FIRST" ? nextLineDates[0] : nextLineDates.at(-1);
       if (next) return next;
     }
@@ -486,51 +577,51 @@ function extractMoneyFromLine(line: string, fractionDigits: number): MoneyMinor 
   return null;
 }
 
-function parseEndorsements(lines: readonly string[]): readonly CoiEndorsementEvidence[] {
+function parseEndorsements(lines: readonly PageAwareLine[]): readonly CoiEndorsementEvidence[] {
   const results: CoiEndorsementEvidence[] = [];
   const seen = new Set<string>();
   for (const line of lines) {
     const isEndorsementLine =
       /\b(?:ENDORSE(?:MENT|D)|ADDITIONAL\s+INSURED|WAIVER\s+OF\s+SUBROGATION|PRIMARY\s+(?:AND|&)\s+NONCONTRIBUTORY)\b/i.test(
-        line,
+        line.text,
       );
-    const formMatch = /\b([A-Z]{1,4})\s*(\d{2})\s*(\d{2})(?:\s*(\d{2}))?\b/.exec(line);
+    const formMatch = /\b([A-Z]{1,4})\s*(\d{2})\s*(\d{2})(?:\s*(\d{2}))?\b/.exec(line.text);
     if (!isEndorsementLine && !formMatch) continue;
 
     const formCode = formMatch
       ? [formMatch[1], formMatch[2], formMatch[3], formMatch[4]].filter(Boolean).join(" ")
       : undefined;
-    const commonName = /ADDITIONAL\s+INSURED/i.test(line)
+    const commonName = /ADDITIONAL\s+INSURED/i.test(line.text)
       ? "Additional insured"
-      : /WAIVER\s+OF\s+SUBROGATION/i.test(line)
+      : /WAIVER\s+OF\s+SUBROGATION/i.test(line.text)
         ? "Waiver of subrogation"
-        : /PRIMARY\s+(?:AND|&)\s+NONCONTRIBUTORY/i.test(line)
+        : /PRIMARY\s+(?:AND|&)\s+NONCONTRIBUTORY/i.test(line.text)
           ? "Primary and noncontributory"
           : undefined;
-    const identity = `${formCode ?? ""}|${commonName ?? line}`
+    const identity = `${formCode ?? ""}|${commonName ?? line.text}`
       .toUpperCase()
       .replace(/[^A-Z0-9|]/g, "");
     if (seen.has(identity)) continue;
     seen.add(identity);
 
-    const evidenceLevel = /\bATTACHED\b/i.test(line)
-      ? "ATTACHED"
-      : /\bSCHEDULED?\b/i.test(line)
-        ? "SCHEDULED"
-        : "MENTIONED";
     results.push({
       id: `ocr-endorsement-${results.length + 1}`,
       ...(formCode ? { formCode: ocrField(formCode, line, 8_500) } : {}),
       ...(commonName ? { name: ocrField(commonName, line, 8_200) } : {}),
-      evidenceLevel: ocrField(evidenceLevel, line, 8_000),
+      // Machine text can show only that a document mentions an endorsement.
+      // ATTACHED and HUMAN_VERIFIED require a person to inspect the package.
+      evidenceLevel: ocrField("MENTIONED", line, 8_000),
     });
   }
   return results;
 }
 
-function policySource(lines: readonly string[], policyNumber: string): string {
+function policySource(lines: readonly PageAwareLine[], policyNumber: string): PageAwareLine {
   return (
-    lines.find((line) => line.toUpperCase().includes(policyNumber.toUpperCase())) ?? policyNumber
+    lines.find((line) => line.text.toUpperCase().includes(policyNumber.toUpperCase())) ?? {
+      text: policyNumber,
+      page: lines[0]?.page ?? 1,
+    }
   );
 }
 
@@ -543,12 +634,13 @@ function isPlausiblePolicyNumber(value: string): boolean {
   );
 }
 
-function ocrField<T>(value: T, rawText: string, confidenceBps: number): EvidenceField<T> {
+function ocrField<T>(value: T, line: PageAwareLine, confidenceBps: number): EvidenceField<T> {
   return evidenceField(value, {
     confirmation: "UNCONFIRMED",
     source: "OCR",
     confidenceBps,
-    rawText,
+    rawText: line.text,
+    page: line.page,
   });
 }
 

@@ -26,11 +26,20 @@ usable without a commercial COI platform:
 Every result should use bounded language and show that it is based on a
 document, configured requirements, and an evaluation date.
 
-## v0.x: hardening and operational maturity
+## v0.2: evidence and interoperability (shipped)
+
+- page-aware field and endorsement proposal provenance with original-PDF links;
+- a public vendor-neutral synthetic text benchmark, scorer, citations, failure cases, and CI;
+- optional tenant-bound OpenID Connect with a local break-glass path;
+- scoped service accounts, versioned API, OpenAPI description, ordered events, and durable signed webhooks;
+- constant-query vendor summaries and a published hardware-labelled 10k-vendor workload;
+- tested keyboard/form interaction contracts and accessibility documentation; and
+- a preregistered privacy-safe usability study kit with no fabricated participant results.
+
+## v0.x: remaining hardening and operational maturity
 
 Priorities after the first usable release include:
 
-- field-level extraction provenance and document-page evidence;
 - immutable certificate revisions, requirement versions, and evaluation
   snapshots;
 - project, location, or contract-specific requirement assignments;
@@ -40,9 +49,9 @@ Priorities after the first usable release include:
   document previews;
 - idempotent reminder delivery, bounce handling, and configurable escalation;
 - documented backup, restore, deletion, and upgrade procedures;
-- accessibility testing, localization foundations, and timezone-safe dates;
+- browser/assistive-technology accessibility testing, localization foundations, and timezone-safe dates;
 - a stable, typed rule specification and documented export schema; and
-- performance and tenant-isolation test suites for larger deployments.
+- concurrent-write, storage-volume, failover, and tenant-isolation test suites for larger deployments.
 
 Security requirements are not deferred merely because they appear in this
 section. A deployment exposed to untrusted files or multiple organizations must
@@ -55,7 +64,7 @@ Potential directions include:
 - pluggable local and explicitly opted-in cloud extraction providers;
 - requirement import from contracts with source citations and mandatory human
   confirmation;
-- integrations through a documented API and event model;
+- packaged integrations built on the documented API and event model;
 - custom coverage vocabularies and safe rule-extension packages;
 - stronger audit integrity, signed exports, and reproducible decision bundles;
 - reusable, independently designed synthetic fixture packs; and

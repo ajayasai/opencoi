@@ -52,6 +52,24 @@ These are goals that must be proven in releases, tests, documentation, and
 real deployments. Being open source does not automatically make the software
 more secure, accurate, usable, or economical.
 
+## Public artifacts and evidence status
+
+OpenCOI v0.2 publishes artifacts and evidence for several narrower claims:
+
+| Question | Public artifact | Result or status |
+| --- | --- | --- |
+| Can its shared text parser be scored reproducibly? | [Corpus, schemas, scorer, and method](../benchmark/README.md) plus [machine-readable output](../benchmark/results/synthetic-text-v1-opencoi-v0.2.0.score.json) | Six original synthetic page-text cases: micro F1 `0.984375`, citation recall `0.969231`, exact documents `5/6`; browser OCR and real documents are not measured. |
+| Are parser failures visible? | Per-case score and [head-to-head status](../benchmark/HEAD_TO_HEAD_STATUS.md) | Two deliberately exposed insurer-assignment false negatives; every commercial comparator is “not tested,” not assigned a fabricated score. |
+| Does endorsement evidence overclaim attachment? | Frozen benchmark and OCR regression tests | Machine text is capped at `MENTIONED`; attachment/human-verification requires a person. |
+| Does the vendor list grow one query per vendor? | [Scale method and output](../benchmark/scale/README.md) plus query-count regression | One aggregate query; the published Windows run reports 10,000 rows at 96.13 ms median / 117.801 ms p95 on the labelled host. It is not a capacity or horizontal-scale claim. |
+| Are standards-based integration interfaces available? | [API/webhook contract](API.md), served OpenAPI 3.1, and integration tests | Scoped service accounts, OIDC, cursor API, idempotency, ETags, ordered events, signatures, retries, dead letters, and SSRF controls are implemented. Breadth against each commercial integration catalog is not established. |
+| Is real-world usability proven? | [Preregistered protocol and analyzer](../research/usability/README.md) | No participant sessions yet. Synthetic analyzer tests are not usability results. |
+
+These artifacts make OpenCOI's stated claims inspectable and independently testable. This
+is not enough to say it is universally better overall. A lawful, identical
+commercial-product run and real participant/production evidence are still
+required for that broader conclusion.
+
 ## Where OpenCOI should not claim an advantage
 
 Do not claim parity or superiority in:

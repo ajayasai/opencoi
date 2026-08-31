@@ -44,6 +44,34 @@ The bootstrap values are read only when the user table is empty. After the initi
 
 For local evaluation without TLS, use `OPENCOI_APP_ORIGIN=http://localhost:4174` and `COOKIE_SECURE=false`. Never use that cookie setting for a public deployment.
 
+### Optional OpenID Connect SSO
+
+OpenCOI can use one OpenID Connect provider for one explicit organization while retaining local password sign-in as a break-glass path. Register this exact redirect URI at the provider, substituting the public origin configured in `OPENCOI_APP_ORIGIN`:
+
+```text
+https://coi.example.com/api/auth/oidc/callback
+```
+
+Add all required values together:
+
+```dotenv
+OIDC_ISSUER=https://identity.example.com/tenant-id
+OIDC_CLIENT_ID=opencoi
+OIDC_CLIENT_SECRET=replace-with-the-provider-issued-secret
+OIDC_ORGANIZATION_SLUG=example-construction
+OIDC_CLIENT_AUTH_METHOD=client_secret_basic
+OIDC_DISPLAY_NAME=Company SSO
+OIDC_TRANSACTION_TTL_MINUTES=10
+```
+
+`OIDC_ISSUER` must be the provider's exact HTTPS issuer identifier, not merely its login-page URL or discovery-document URL. `client_secret_basic` is the default; use `client_secret_post` only when the provider requires it. Store the client secret in the deployment secret manager and prevent it from appearing in rendered Compose output, logs, support bundles, or issue reports.
+
+The configured organization must already exist and its slug must exactly match `OIDC_ORGANIZATION_SLUG`. OpenCOI does not create users or assign roles from OIDC claims. On a user's first SSO login, the provider must return `email` and `email_verified: true`, and one active pre-provisioned OpenCOI user in that organization must have the same email address. OpenCOI then binds that user to the validated `(issuer, subject)` pair. Later logins use that immutable binding rather than email. The initial bootstrap administrator can be bound this way; provision other users through the deployment's controlled account process before they attempt SSO.
+
+The requested scopes are `openid email profile`. Provider access, refresh, and ID tokens are not retained after OpenCOI creates its own session. Authorization Code, PKCE S256, state, nonce, issuer/audience/signature checks, and a short-lived one-use database transaction protect the flow. The provider remains responsible for MFA and its own account-recovery policy.
+
+After enabling SSO, verify the public login page shows the configured button, complete a test login, sign out, and test the local administrator password. Do not disable or discard the break-glass credential until its recovery procedure has been tested. Removing the OIDC environment values disables new SSO attempts without deleting prior identity bindings.
+
 ### Optional SMTP delivery
 
 Without SMTP, OpenCOI can record reminder work but cannot deliver email. Add the following values when mail delivery is required:
@@ -109,6 +137,31 @@ Compose creates the `opencoi-data` named volume and mounts it at `/app/data`. St
 - Restrict host and Docker-daemon access; membership in the Docker administrative group is effectively root access to the data.
 - Follow [BACKUP_RESTORE.md](BACKUP_RESTORE.md) and test restores on a separate host.
 
+## Webhook worker
+
+Webhook endpoints require a stable `TOKEN_PEPPER` of at least 32 bytes. OpenCOI
+uses it to encrypt signing secrets at rest; losing or changing it makes existing
+webhook secrets unreadable and also invalidates peppered bearer-token digests.
+
+Run one independently supervised delivery worker against the same data volume:
+
+```sh
+docker compose --profile webhooks up --build -d
+docker compose ps
+docker compose logs --tail=100 webhook-worker
+```
+
+The profile starts the normal web service and one non-root, read-only-root
+worker. `WEBHOOK_POLL_SECONDS` defaults to 15 and accepts 1–3600. Do not run
+multiple webhook workers in the bundled SQLite topology as a claim of
+horizontal scale. The lease logic recovers a crashed claim and protects against
+two workers taking the same due row, but SQLite and the local upload directory
+remain a single-host data plane.
+
+Without Compose, use `npm run webhooks:run -- --watch` under a process
+supervisor. Alert on worker exits and on visible dead-letter rows. Receivers
+must deduplicate the stable `webhook-id`; delivery is at least once.
+
 ## Upgrades
 
 1. Read the target release notes and compatibility notices.
@@ -137,6 +190,9 @@ Application startup may advance the SQLite schema. A container-image rollback do
 - Put rate limiting and abuse monitoring at the edge for an internet-facing service.
 - Never use production COIs as issue attachments, test fixtures, screenshots, or demo data.
 - Review dependencies and the CycloneDX SBOM attached to each tagged GitHub release.
+- Verify downloaded assets with `sha256sum -c SHA256SUMS`, then verify GitHub's
+  signed build provenance with
+  `gh attestation verify opencoi-<version>.tar.gz --repo ajayasai/opencoi`.
 
 The default image tag is local and is built from the checked-out source. It is not a substitute for a managed secrets service, encrypted storage, centralized monitoring, or an independently reviewed production architecture.
 

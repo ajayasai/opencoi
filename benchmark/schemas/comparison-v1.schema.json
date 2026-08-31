@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:opencoi:benchmark:comparison:v1",
+  "title": "OpenCOI descriptive benchmark comparison v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "corpusId",
+    "corpusSha256",
+    "referenceSystemId",
+    "disclaimer",
+    "rows"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "corpusId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "corpusSha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "referenceSystemId": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "disclaimer": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "rows": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/row" }
+    }
+  },
+  "$defs": {
+    "rate": { "type": "number", "minimum": 0, "maximum": 1 },
+    "delta": { "type": "number", "minimum": -1, "maximum": 1 },
+    "system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "version"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 200 }
+      }
+    },
+    "deltas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["macroF1", "microF1", "citationRecall", "exactDocumentRate"],
+      "properties": {
+        "macroF1": { "$ref": "#/$defs/delta" },
+        "microF1": { "$ref": "#/$defs/delta" },
+        "citationRecall": { "$ref": "#/$defs/delta" },
+        "exactDocumentRate": { "$ref": "#/$defs/delta" }
+      }
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "system",
+        "macroF1",
+        "microF1",
+        "citationRecall",
+        "exactDocumentRate",
+        "deltaFromReference"
+      ],
+      "properties": {
+        "system": { "$ref": "#/$defs/system" },
+        "macroF1": { "$ref": "#/$defs/rate" },
+        "microF1": { "$ref": "#/$defs/rate" },
+        "citationRecall": { "$ref": "#/$defs/rate" },
+        "exactDocumentRate": { "$ref": "#/$defs/rate" },
+        "deltaFromReference": { "$ref": "#/$defs/deltas" }
+      }
+    }
+  }
+}

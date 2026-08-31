@@ -15,6 +15,7 @@ import {
   type LimitType,
   type MoneyMinor,
   moneyMinor,
+  normalizeOcrText,
   RULES_SCHEMA_VERSION,
   type RulesetV1Input,
 } from "../../shared/index.js";
@@ -27,6 +28,7 @@ import type {
   OrganizationRepository,
 } from "../db.js";
 import type { DocumentStore } from "../storage.js";
+import { publishDomainEvent } from "./domainEvents.js";
 
 const optionalText = z.string().trim().max(500).nullable().optional();
 const optionalIsoDate = z
@@ -39,6 +41,39 @@ const optionalIsoDate = z
 
 const limitValueSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const limitsSchema = z.partialRecord(z.enum(LIMIT_TYPES), limitValueSchema).default({});
+const extractedPageSchema = z
+  .object({
+    page: z.number().int().min(1).max(100),
+    text: z.string().max(2_000_000),
+    method: z.enum(["text_layer", "ocr"]),
+    confidenceBps: z.number().int().min(0).max(10_000).optional(),
+  })
+  .strict();
+const provenanceSchema = z
+  .object({
+    field: z.enum([
+      "NAMED_INSURED",
+      "CERTIFICATE_HOLDER",
+      "COVERAGE_TYPE",
+      "INSURER_NAME",
+      "POLICY_NUMBER",
+      "EFFECTIVE_DATE",
+      "EXPIRATION_DATE",
+      "LIMIT",
+      "ENDORSEMENT_NAME",
+      "ENDORSEMENT_FORM_CODE",
+      "ENDORSEMENT_EVIDENCE_LEVEL",
+    ]),
+    extractedValue: z.union([z.string().max(500), z.number().int().nonnegative()]),
+    policyIndex: z.number().int().nonnegative().max(49).optional(),
+    endorsementIndex: z.number().int().nonnegative().max(99).optional(),
+    limitType: z.enum(LIMIT_TYPES).optional(),
+    source: z.literal("OCR"),
+    confidenceBps: z.number().int().min(0).max(10_000).optional(),
+    rawText: z.string().trim().min(1).max(2_000),
+    page: z.number().int().min(1).max(100),
+  })
+  .strict();
 
 const policySchema = z
   .object({
@@ -67,15 +102,92 @@ export const certificateMetadataSchema = z
     extractionVersion: z.string().trim().max(100).optional(),
     extractionMethod: z.string().trim().max(100).optional(),
     rawText: z.string().max(2_000_000).default(""),
-    pages: z.array(z.unknown()).max(100).optional(),
+    pages: z.array(extractedPageSchema).max(100).optional(),
     reviewStatus: z.enum(["CONFIRMED", "UNCONFIRMED"]).default("UNCONFIRMED"),
     namedInsured: z.string().trim().max(500).default(""),
     issueDate: optionalIsoDate,
     producer: optionalText,
     certificateHolder: optionalText,
+    provenance: z.array(provenanceSchema).max(2_000).default([]),
     policies: z.array(policySchema).max(50).default([]),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((metadata, context) => {
+    const pages = metadata.pages ?? [];
+    const pageMap = new Map<number, Set<string>>();
+    let submittedPageCharacters = 0;
+    for (const [index, page] of pages.entries()) {
+      submittedPageCharacters += page.text.length;
+      if (pageMap.has(page.page)) {
+        context.addIssue({
+          code: "custom",
+          path: ["pages", index, "page"],
+          message: `Page ${page.page} is duplicated`,
+        });
+        continue;
+      }
+      pageMap.set(
+        page.page,
+        new Set(
+          normalizeOcrText(page.text)
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean),
+        ),
+      );
+    }
+    if (submittedPageCharacters > 2_000_000) {
+      context.addIssue({
+        code: "custom",
+        path: ["pages"],
+        message: "Combined submitted page text exceeds 2,000,000 characters",
+      });
+    }
+    const orderedPageNumbers = [...pageMap.keys()].sort((left, right) => left - right);
+    if (orderedPageNumbers.some((page, index) => page !== index + 1)) {
+      context.addIssue({
+        code: "custom",
+        path: ["pages"],
+        message: "Submitted page metadata must be contiguous and start at page 1",
+      });
+    }
+    if (metadata.provenance.length > 0 && pages.length === 0) {
+      context.addIssue({
+        code: "custom",
+        path: ["pages"],
+        message: "Page metadata is required when extraction provenance is submitted",
+      });
+    }
+    for (const [index, citation] of metadata.provenance.entries()) {
+      const pageLines = pageMap.get(citation.page);
+      if (!pageLines) {
+        context.addIssue({
+          code: "custom",
+          path: ["provenance", index, "page"],
+          message: `Citation page ${citation.page} is not present in submitted page metadata`,
+        });
+        continue;
+      }
+      const normalizedCitation = normalizeOcrText(citation.rawText);
+      if (!pageLines.has(normalizedCitation)) {
+        context.addIssue({
+          code: "custom",
+          path: ["provenance", index, "rawText"],
+          message: "Citation text does not match a normalized line on the cited page",
+        });
+      }
+      if (
+        citation.field === "ENDORSEMENT_EVIDENCE_LEVEL" &&
+        citation.extractedValue !== "MENTIONED"
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["provenance", index, "extractedValue"],
+          message: "Machine endorsement evidence cannot exceed MENTIONED",
+        });
+      }
+    }
+  });
 
 /**
  * Reviewer-editable facts are deliberately narrower than stored extraction
@@ -315,43 +427,127 @@ const rulesetFor = (
   };
 };
 
-const evidence = <T>(value: T, confirmed: boolean) =>
+type ExtractionProvenance = CertificateMetadata["provenance"][number];
+
+const valuesMatch = (left: unknown, right: unknown): boolean =>
+  typeof left === typeof right && left === right;
+
+const findProvenance = (
+  metadata: CertificateMetadata,
+  field: ExtractionProvenance["field"],
+  value: unknown,
+  qualifiers: Pick<ExtractionProvenance, "policyIndex" | "endorsementIndex" | "limitType"> = {},
+): ExtractionProvenance | undefined =>
+  metadata.provenance.find(
+    (candidate) =>
+      candidate.field === field &&
+      valuesMatch(candidate.extractedValue, value) &&
+      (qualifiers.policyIndex === undefined || candidate.policyIndex === qualifiers.policyIndex) &&
+      (qualifiers.endorsementIndex === undefined ||
+        candidate.endorsementIndex === qualifiers.endorsementIndex) &&
+      (qualifiers.limitType === undefined || candidate.limitType === qualifiers.limitType),
+  );
+
+const evidence = <T>(value: T, confirmed: boolean, provenance?: ExtractionProvenance) =>
   evidenceField(value, {
     confirmation: confirmed ? "CONFIRMED" : "UNCONFIRMED",
-    source: "MANUAL",
-    confidenceBps: confirmed ? 10_000 : undefined,
+    source: provenance ? "OCR" : "MANUAL",
+    confidenceBps: provenance?.confidenceBps ?? (confirmed ? 10_000 : undefined),
+    ...(provenance ? { rawText: provenance.rawText, page: provenance.page } : {}),
   });
 
-const documentFacts = (documentId: string, metadata: CertificateMetadata): CoiDocumentFacts => {
+export const documentFacts = (
+  documentId: string,
+  metadata: CertificateMetadata,
+): CoiDocumentFacts => {
   const confirmed = metadata.reviewStatus === "CONFIRMED";
   const endorsements: CoiEndorsementEvidence[] = [];
   const policies: CoiPolicyFacts[] = metadata.policies.map((policy, policyIndex) => {
-    for (const endorsement of policy.endorsements) {
+    for (const [endorsementIndex, endorsement] of policy.endorsements.entries()) {
+      const nameEvidence =
+        findProvenance(metadata, "ENDORSEMENT_NAME", endorsement.name, { policyIndex }) ??
+        findProvenance(metadata, "ENDORSEMENT_NAME", endorsement.name);
+      const originalEndorsementIndex = nameEvidence?.endorsementIndex;
       endorsements.push({
         id: `${documentId}:endorsement:${endorsements.length + 1}`,
-        name: evidence(endorsement.name, confirmed),
-        ...(endorsement.formCode ? { formCode: evidence(endorsement.formCode, confirmed) } : {}),
-        evidenceLevel: evidence(endorsement.evidenceLevel, confirmed),
+        name: evidence(endorsement.name, confirmed, nameEvidence),
+        ...(endorsement.formCode
+          ? {
+              formCode: evidence(
+                endorsement.formCode,
+                confirmed,
+                findProvenance(metadata, "ENDORSEMENT_FORM_CODE", endorsement.formCode, {
+                  endorsementIndex: originalEndorsementIndex ?? endorsementIndex,
+                }) ?? findProvenance(metadata, "ENDORSEMENT_FORM_CODE", endorsement.formCode),
+              ),
+            }
+          : {}),
+        evidenceLevel: evidence(
+          endorsement.evidenceLevel,
+          confirmed,
+          findProvenance(metadata, "ENDORSEMENT_EVIDENCE_LEVEL", endorsement.evidenceLevel, {
+            endorsementIndex: originalEndorsementIndex ?? endorsementIndex,
+          }) ?? findProvenance(metadata, "ENDORSEMENT_EVIDENCE_LEVEL", endorsement.evidenceLevel),
+        ),
       });
     }
     const limits: Partial<Record<LimitType, EvidenceField<MoneyMinor>>> = {};
     for (const [key, value] of Object.entries(policy.limits)) {
       if ((LIMIT_TYPES as readonly string[]).includes(key) && value !== undefined) {
-        limits[key as LimitType] = evidence(moneyMinor(value), confirmed);
+        limits[key as LimitType] = evidence(
+          moneyMinor(value),
+          confirmed,
+          findProvenance(metadata, "LIMIT", value, {
+            policyIndex,
+            limitType: key as LimitType,
+          }),
+        );
       }
     }
     return {
       id: `${documentId}:policy:${policyIndex + 1}`,
-      coverageType: evidence(normalizeCoverageType(policy.coverageType), confirmed),
+      coverageType: evidence(
+        normalizeCoverageType(policy.coverageType),
+        confirmed,
+        findProvenance(metadata, "COVERAGE_TYPE", policy.coverageType, { policyIndex }),
+      ),
       ...((policy.insurer ?? policy.insurerName)
-        ? { insurerName: evidence((policy.insurer ?? policy.insurerName) as string, confirmed) }
+        ? {
+            insurerName: evidence(
+              (policy.insurer ?? policy.insurerName) as string,
+              confirmed,
+              findProvenance(metadata, "INSURER_NAME", policy.insurer ?? policy.insurerName, {
+                policyIndex,
+              }),
+            ),
+          }
         : {}),
-      ...(policy.policyNumber ? { policyNumber: evidence(policy.policyNumber, confirmed) } : {}),
+      ...(policy.policyNumber
+        ? {
+            policyNumber: evidence(
+              policy.policyNumber,
+              confirmed,
+              findProvenance(metadata, "POLICY_NUMBER", policy.policyNumber, { policyIndex }),
+            ),
+          }
+        : {}),
       ...(policy.effectiveDate
-        ? { effectiveDate: evidence(isoDate(policy.effectiveDate), confirmed) }
+        ? {
+            effectiveDate: evidence(
+              isoDate(policy.effectiveDate),
+              confirmed,
+              findProvenance(metadata, "EFFECTIVE_DATE", policy.effectiveDate, { policyIndex }),
+            ),
+          }
         : {}),
       ...(policy.expirationDate
-        ? { expirationDate: evidence(isoDate(policy.expirationDate), confirmed) }
+        ? {
+            expirationDate: evidence(
+              isoDate(policy.expirationDate),
+              confirmed,
+              findProvenance(metadata, "EXPIRATION_DATE", policy.expirationDate, { policyIndex }),
+            ),
+          }
         : {}),
       limits,
     };
@@ -359,9 +555,23 @@ const documentFacts = (documentId: string, metadata: CertificateMetadata): CoiDo
   return {
     id: documentId,
     reviewStatus: metadata.reviewStatus,
-    ...(metadata.namedInsured ? { namedInsured: evidence(metadata.namedInsured, confirmed) } : {}),
+    ...(metadata.namedInsured
+      ? {
+          namedInsured: evidence(
+            metadata.namedInsured,
+            confirmed,
+            findProvenance(metadata, "NAMED_INSURED", metadata.namedInsured),
+          ),
+        }
+      : {}),
     ...(metadata.certificateHolder
-      ? { certificateHolder: evidence(metadata.certificateHolder, confirmed) }
+      ? {
+          certificateHolder: evidence(
+            metadata.certificateHolder,
+            confirmed,
+            findProvenance(metadata, "CERTIFICATE_HOLDER", metadata.certificateHolder),
+          ),
+        }
       : {}),
     policies,
     endorsements,
@@ -629,6 +839,38 @@ export const ingestCertificate = async (
           ? { reviewedByUserId: input.uploadedByUserId }
           : {}),
       });
+      publishDomainEvent(input.database, {
+        organizationId: repository.organizationId,
+        type: "certificate.submitted",
+        resourceType: "certificate",
+        resourceId: certificate.id,
+        data: {
+          vendorId: input.vendorId,
+          documentId: document.id,
+          reviewStatus: metadata.reviewStatus,
+          submissionChannel: input.uploadLinkId ? "vendor_upload_link" : "staff",
+        },
+        actorType: input.uploadedByUserId ? "user" : "system",
+        actorId: input.uploadedByUserId,
+        at: now.toISOString(),
+      });
+      if (metadata.reviewStatus === "CONFIRMED") {
+        publishDomainEvent(input.database, {
+          organizationId: repository.organizationId,
+          type: "certificate.confirmed",
+          resourceType: "certificate",
+          resourceId: certificate.id,
+          data: {
+            vendorId: input.vendorId,
+            documentId: document.id,
+            requirementVersion,
+            evaluationDate,
+          },
+          actorType: input.uploadedByUserId ? "user" : "system",
+          actorId: input.uploadedByUserId,
+          at: now.toISOString(),
+        });
+      }
       return {
         certificate: repository.getCertificate(certificate.id) as CertificateRow,
         document: repository.getDocument(document.id) as DocumentRow,
@@ -727,6 +969,22 @@ export const confirmStoredCertificate = (input: {
       confidence: 1,
       reviewedByUserId: input.reviewerUserId,
     });
+    publishDomainEvent(input.database, {
+      organizationId: repository.organizationId,
+      type: "certificate.confirmed",
+      resourceType: "certificate",
+      resourceId: certificate.id,
+      data: {
+        vendorId: certificate.vendor_id,
+        documentId: document.id,
+        requirementVersion,
+        evaluationDate,
+        correctedFields,
+      },
+      actorType: "user",
+      actorId: input.reviewerUserId,
+      at: now.toISOString(),
+    });
     return {
       certificate: repository.getCertificate(certificate.id) as CertificateRow,
       document: repository.getDocument(document.id) as DocumentRow,
@@ -794,6 +1052,16 @@ export const rejectStoredCertificate = (input: {
         },
       },
       reviewedByUserId: input.reviewerUserId,
+    });
+    publishDomainEvent(input.database, {
+      organizationId: repository.organizationId,
+      type: "certificate.rejected",
+      resourceType: "certificate",
+      resourceId: certificate.id,
+      data: { vendorId: certificate.vendor_id, documentId: document.id },
+      actorType: "user",
+      actorId: input.reviewerUserId,
+      at,
     });
     return {
       certificate: repository.getCertificate(certificate.id) as CertificateRow,

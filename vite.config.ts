@@ -3,7 +3,11 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // A local .env may intentionally set NODE_ENV=development for `npm run dev`.
+  // Never let that opt a release build into React's development runtime.
+  define:
+    command === "build" ? { "process.env.NODE_ENV": JSON.stringify("production") } : undefined,
   plugins: [
     react(),
     viteStaticCopy({
@@ -48,4 +52,4 @@ export default defineConfig({
       "/uploads": "http://127.0.0.1:4174",
     },
   },
-});
+}));

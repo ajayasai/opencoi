@@ -70,7 +70,7 @@ describe("database initialization", () => {
       foreign_keys: 1,
     });
     expect(database.prepare("PRAGMA user_version").get()).toEqual({
-      user_version: 2,
+      user_version: 3,
     });
     const tables = database
       .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name")
@@ -81,6 +81,8 @@ describe("database initialization", () => {
         "organizations",
         "users",
         "sessions",
+        "oidc_identities",
+        "oidc_login_transactions",
         "vendor_types",
         "coverage_requirements",
         "vendors",
@@ -134,12 +136,69 @@ describe("database initialization", () => {
 
     initializeDatabase(database);
 
-    expect(database.prepare("PRAGMA user_version").get()).toEqual({ user_version: 2 });
+    expect(database.prepare("PRAGMA user_version").get()).toEqual({ user_version: 3 });
     const columns = database
       .prepare("PRAGMA table_info(reminders)")
       .all()
       .map((row) => row.name);
     expect(columns).toEqual(expect.arrayContaining(["retry_eligible", "next_attempt_at"]));
+  });
+
+  it("adds OIDC state without rewriting version 2 organizations or users", () => {
+    const database = openDatabase(":memory:", { initialize: false });
+    databases.push(database);
+    database.exec(`
+      CREATE TABLE organizations (
+        id TEXT PRIMARY KEY,
+        slug TEXT NOT NULL UNIQUE COLLATE NOCASE,
+        name TEXT NOT NULL,
+        settings_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+        email TEXT NOT NULL COLLATE NOCASE,
+        display_name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL,
+        status TEXT NOT NULL,
+        last_login_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (organization_id, id),
+        UNIQUE (organization_id, email)
+      ) STRICT;
+      INSERT INTO organizations
+        (id, slug, name, created_at, updated_at)
+        VALUES ('org-a', 'organization-a', 'Organization A', '2026-01-01', '2026-01-01');
+      INSERT INTO users
+        (id, organization_id, email, display_name, password_hash, role, status,
+         created_at, updated_at)
+        VALUES ('user-a', 'org-a', 'a@example.test', 'Admin A', 'hash', 'owner', 'active',
+                '2026-01-01', '2026-01-01');
+      PRAGMA user_version = 2;
+    `);
+
+    initializeDatabase(database);
+
+    expect(database.prepare("PRAGMA user_version").get()).toEqual({ user_version: 3 });
+    expect(database.prepare("SELECT name FROM organizations WHERE id = 'org-a'").get()).toEqual({
+      name: "Organization A",
+    });
+    expect(database.prepare("SELECT email FROM users WHERE id = 'user-a'").get()).toEqual({
+      email: "a@example.test",
+    });
+    expect(
+      createOrganizationRepository(database, "org-a").bindOidcIdentity({
+        issuer: "https://identity.example.test",
+        subject: "subject-a",
+        userId: "user-a",
+        email: "a@example.test",
+      }),
+    ).toBe(true);
+    expect(database.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
   });
 });
 
@@ -189,6 +248,41 @@ describe("strict organization scoping", () => {
     expect(repositoryB.consumeUploadLink(link.id)).toBe(true);
     expect(repositoryB.consumeUploadLink(link.id)).toBe(false);
     expect(repositoryB.getActiveUploadLinkByHash(token.tokenHash)).toBeNull();
+  });
+
+  it("scopes OIDC identities and consumes login transactions exactly once", () => {
+    const { repositoryA, repositoryB } = setupTwoOrganizations();
+    const at = "2026-08-31T12:00:00.000Z";
+    const expiresAt = "2026-08-31T12:10:00.000Z";
+    const transaction = repositoryA.createOidcLoginTransaction({
+      issuer: "https://identity.example.test",
+      transactionTokenHash: "a".repeat(64),
+      stateHash: "b".repeat(64),
+      codeVerifier: "c".repeat(43),
+      nonce: "d".repeat(32),
+      expiresAt,
+      createdAt: at,
+    });
+    expect(repositoryB.getActiveOidcLoginTransaction("a".repeat(64), at)).toBeNull();
+    expect(repositoryB.consumeOidcLoginTransaction(transaction.id, at)).toBe(false);
+    expect(repositoryA.consumeOidcLoginTransaction(transaction.id, at)).toBe(true);
+    expect(repositoryA.consumeOidcLoginTransaction(transaction.id, at)).toBe(false);
+
+    expect(
+      repositoryA.bindOidcIdentity({
+        issuer: "https://identity.example.test",
+        subject: "subject-a",
+        userId: "user-a",
+        email: "a@example.test",
+        at,
+      }),
+    ).toBe(true);
+    expect(
+      repositoryA.getUserByOidcIdentity("https://identity.example.test", "subject-a")?.id,
+    ).toBe("user-a");
+    expect(
+      repositoryB.getUserByOidcIdentity("https://identity.example.test", "subject-a"),
+    ).toBeNull();
   });
 
   it("rejects cross-organization certificate replacement", () => {

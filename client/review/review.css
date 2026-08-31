@@ -1324,8 +1324,68 @@
 
 .evidence-card,
 .hash-card,
+.evidence-citations-card,
 .scope-card {
   padding: 16px;
+}
+
+.evidence-citations-card details > summary {
+  align-items: center;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  font-size: 0.88rem;
+  font-weight: 700;
+  gap: 0.5rem;
+}
+
+.evidence-citations-card details > p {
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  margin: 0.85rem 0;
+}
+
+.evidence-citations-card ul {
+  display: grid;
+  gap: 0.7rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.evidence-citations-card li {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.7rem;
+}
+
+.evidence-citations-card li > div {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.evidence-citations-card li span,
+.evidence-citations-card li a {
+  color: var(--ink-muted);
+  font-size: 0.7rem;
+}
+
+.evidence-citations-card li q {
+  color: var(--ink);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.72rem;
+  overflow-wrap: anywhere;
+}
+
+.evidence-citations-card li a {
+  color: var(--forest-700);
+  font-weight: 700;
+  width: fit-content;
 }
 
 .evidence-card > header {

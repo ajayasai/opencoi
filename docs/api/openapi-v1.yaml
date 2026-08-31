@@ -1,0 +1,264 @@
+openapi: 3.1.0
+info:
+  title: OpenCOI API
+  version: 2026-08-31
+  description: >-
+    Tenant-isolated API for vendors, configured requirements, uploaded-document
+    compliance results, and ordered domain events. It does not verify live policy status.
+  license:
+    name: AGPL-3.0-only
+    identifier: AGPL-3.0-only
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+paths:
+  /vendors:
+    get:
+      operationId: listVendors
+      summary: List vendors
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/VendorStatus' }
+      responses:
+        '200':
+          description: Cursor page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Vendor' } }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '403': { $ref: '#/components/responses/Problem' }
+    post:
+      operationId: createVendor
+      summary: Create a vendor
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/VendorInput' }
+      responses:
+        '201':
+          description: Created
+          headers:
+            ETag: { schema: { type: string } }
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VendorEnvelope' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /vendors/{vendorId}:
+    parameters:
+      - $ref: '#/components/parameters/VendorId'
+    get:
+      operationId: getVendor
+      summary: Get a vendor
+      responses:
+        '200':
+          description: Vendor
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VendorEnvelope' }
+        '404': { $ref: '#/components/responses/Problem' }
+    patch:
+      operationId: updateVendor
+      summary: Update a vendor with optimistic concurrency
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - name: If-Match
+          in: header
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VendorPatch'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/VendorEnvelope' }
+        '412': { $ref: '#/components/responses/Problem' }
+        '428': { $ref: '#/components/responses/Problem' }
+  /vendors/{vendorId}/compliance:
+    get:
+      operationId: getVendorCompliance
+      summary: Get the latest uploaded-document compliance result
+      parameters:
+        - $ref: '#/components/parameters/VendorId'
+      responses:
+        '200':
+          description: Document-scoped result, findings, and policy facts
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '404': { $ref: '#/components/responses/Problem' }
+  /vendor-types:
+    get:
+      operationId: listVendorTypes
+      summary: List vendor types and active configured requirements
+      responses:
+        '200':
+          description: Vendor types
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+  /events:
+    get:
+      operationId: listEvents
+      summary: Read the ordered domain-event feed
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Ordered event page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DomainEvent' } }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ocoi_sk_…
+  parameters:
+    VendorId:
+      name: vendorId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string, maxLength: 1024 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, minLength: 8, maxLength: 128 }
+  responses:
+    Problem:
+      description: RFC 9457 Problem Details
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    VendorStatus:
+      type: string
+      enum: [active, inactive, archived]
+    VendorInput:
+      type: object
+      additionalProperties: false
+      required: [vendorTypeId, legalName]
+      properties:
+        vendorTypeId: { type: string }
+        legalName: { type: string, minLength: 1, maxLength: 240 }
+        tradeName: { type: [string, 'null'], maxLength: 240 }
+        contactName: { type: [string, 'null'], maxLength: 200 }
+        contactEmail: { type: [string, 'null'], format: email, maxLength: 320 }
+        contactPhone: { type: [string, 'null'], maxLength: 80 }
+        externalReference: { type: [string, 'null'], maxLength: 200 }
+        notes: { type: [string, 'null'], maxLength: 5000 }
+    Vendor:
+      type: object
+      required: [id, vendorType, legalName, contact, status, latestCertificate, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        vendorType:
+          type: object
+          required: [id, name]
+          properties:
+            id: { type: string }
+            name: { type: string }
+        legalName: { type: string }
+        tradeName: { type: [string, 'null'] }
+        contact:
+          type: object
+          required: [name, email, phone]
+          properties:
+            name: { type: [string, 'null'] }
+            email: { type: [string, 'null'] }
+            phone: { type: [string, 'null'] }
+        externalReference: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/VendorStatus' }
+        notes: { type: [string, 'null'] }
+        latestCertificate: { type: [object, 'null'], additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    VendorPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        vendorTypeId: { type: string }
+        legalName: { type: string, minLength: 1, maxLength: 240 }
+        tradeName: { type: [string, 'null'], maxLength: 240 }
+        contactName: { type: [string, 'null'], maxLength: 200 }
+        contactEmail: { type: [string, 'null'], format: email, maxLength: 320 }
+        contactPhone: { type: [string, 'null'], maxLength: 80 }
+        externalReference: { type: [string, 'null'], maxLength: 200 }
+        notes: { type: [string, 'null'], maxLength: 5000 }
+        status: { $ref: '#/components/schemas/VendorStatus' }
+    VendorEnvelope:
+      type: object
+      required: [data]
+      properties:
+        data: { $ref: '#/components/schemas/Vendor' }
+    DomainEvent:
+      type: object
+      required: [id, sequence, type, occurredAt, resource, data]
+      properties:
+        id: { type: string, format: uuid }
+        sequence: { type: integer, minimum: 1 }
+        type: { type: string }
+        occurredAt: { type: string, format: date-time }
+        resource:
+          type: object
+          required: [type, id]
+          properties:
+            type: { type: string }
+            id: { type: [string, 'null'] }
+        data: {}
+    PageMeta:
+      type: object
+      required: [limit, hasMore, nextCursor]
+      properties:
+        limit: { type: integer }
+        hasMore: { type: boolean }
+        nextCursor: { type: [string, 'null'] }
+    Problem:
+      type: object
+      required: [type, title, status, detail, instance, requestId]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        instance: { type: string }
+        requestId: { type: string, format: uuid }
+        errors: {}

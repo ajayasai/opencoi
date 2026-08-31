@@ -16,16 +16,20 @@ Commercial COI products already cover collection, OCR, reminders, and dashboards
 
 - **Explainable checks:** deterministic findings include stable reason codes, expected and observed values, the requirement version, and the evaluation date.
 - **Human authority:** OCR proposes; a reviewer confirms. Missing or unconfirmed evidence is never allowed to produce a pass.
+- **Page-linked provenance:** extracted parties, policies, limits, and endorsement mentions retain their normalized extracted line, submitted page, and confidence; the original proposal remains distinct from any human-corrected fact. The server checks citation consistency with client-submitted page text, while reviewer attestation establishes the link to the original PDF.
 - **Honest exceptions:** an approval is scoped and time-bound, while the underlying failed finding stays visible.
 - **Local document processing:** PDF text extraction and OCR execute in the browser with PDF.js and Tesseract.js. Worker, WebAssembly, and English language assets are served by OpenCOI itself; no runtime OCR CDN or third-party OCR API receives document pages.
 - **Portable operations:** filtered compliance CSV, original-document download, and a reviewable audit trail keep data usable outside the application.
+- **Standards-based sign-in without lock-in:** optional OpenID Connect uses Authorization Code, PKCE, state, and nonce while retaining a local break-glass account.
+- **Open integration surface:** tenant-bound least-privilege service accounts, a versioned OpenAPI 3.1 contract, idempotent writes, optimistic concurrency, an ordered event feed, and Standard Webhooks-compatible signed delivery are included.
+- **Public evidence and evaluation tooling:** original CC0 synthetic fixtures, vendor-neutral schemas, deterministic synthetic fact/citation scoring, published failure cases, a hardware-labelled scale workload, and a preregistered usability protocol make gaps visible rather than marketing around them.
 - **Self-hosting:** one Node.js process, SQLite, and filesystem document storage make a small-team deployment understandable and back-upable.
 
 Open source does not automatically make software safer or more accurate. See the project's [competitive positioning](docs/COMPETITIVE_POSITIONING.md) for the claims OpenCOI will—and will not—make.
 
-## v0.1 scope
+## Shipped v0.2 scope
 
-| Intended capability | v0.1 status | What is included |
+| Intended capability | Status | What is included |
 | --- | --- | --- |
 | Vendor and contractor directory | Included | Create and edit vendor records, assign a vendor type, search and filter by document-check and lifecycle status. |
 | Required coverages by vendor type | Included | Publish versioned coverage profiles with minimum limits, document-period requirements, and named endorsement-evidence requirements. |
@@ -37,11 +41,15 @@ Open source does not automatically make software safer or more accurate. See the
 | Vendor self-service upload | Included | Expiring, revocable bearer links with no vendor account required; submissions enter human review. |
 | Exception approval | Included | Finding-scoped request and decision workflow with rationale, expiration, and an audit trail; approval does not rewrite the base finding. |
 | Compliance-status export | Included | Server-generated, filter-aware CSV with formula-injection protection and document-scoped status language. |
+| Page-level extraction evidence | Included | Browser extraction proposals preserve a normalized source line, submitted page, and confidence. The server rejects citations that do not match the submitted page text; an authorized reviewer still verifies the original PDF. Corrections become manual evidence without rewriting the proposal. |
+| Standards-based authentication | Included | One explicitly tenant-bound OpenID Connect provider with Authorization Code, PKCE, state, nonce, verified identity binding, and local break-glass login. |
+| API and integrations | Included | Scoped service accounts, `/api/v1`, OpenAPI 3.1, cursor pagination, idempotency, ETags, an ordered event feed, signed durable webhooks, retries, dead letters, replay, and SSRF-safe delivery. |
+| Public evaluation tools | Included | Vendor-neutral extraction schemas, six original synthetic page-text cases, deterministic scores/citations, CI regression, a 10k-vendor workload, and a privacy-safe usability study kit. |
 | Live insurer connectivity | Deliberately excluded | No carrier, broker, or agency-management-system connection and no representation of live policy status. See the [roadmap](ROADMAP.md). |
 
 The release also includes a dashboard, review queue, separate document lifecycle state, original-file SHA-256 display, role-checked operations, and an append-only SHA-256-linked audit history.
 
-Limit comparison in v0.1 is USD-only. Non-USD document normalization and explicit currency-mismatch findings are roadmap work; the configuration API rejects other currencies rather than making an unsafe numeric comparison.
+Limit comparison in v0.2 is USD-only. Non-USD document normalization and explicit currency-mismatch findings are roadmap work; the configuration API rejects other currencies rather than making an unsafe numeric comparison.
 
 ## Status language
 
@@ -84,6 +92,8 @@ Useful checks:
 npm run check
 npm run build
 npm run test:coverage
+npm run benchmark:extract
+npm run benchmark:scale
 ```
 
 All example data is synthetic. Never use a real COI as a test fixture or issue attachment.
@@ -113,6 +123,8 @@ For upgrades, reverse proxy guidance, and SMTP configuration, follow [docs/DEPLO
 - Put the application behind HTTPS; set the exact public origin (`OPENCOI_APP_ORIGIN` in Compose or `APP_ORIGIN` for direct Node.js), set `TRUST_PROXY_HOPS` to the exact controlled proxy count, and keep secure cookies enabled. Leave the hop count at `0` for direct access.
 - Keep edge abuse controls enabled. OpenCOI enforces a 300-request-per-minute global ceiling per resolved client address and stricter sign-in and public-upload limits, but its in-process counters are not a substitute for proxy or gateway protection.
 - Generate and preserve a 32+ byte `TOKEN_PEPPER`; store bootstrap and SMTP credentials in a secrets manager.
+- If webhooks are enabled, preserve the same `TOKEN_PEPPER` for the life of their signing secrets and run the external worker (`npm run webhooks:run -- --watch` or the Compose `webhooks` profile).
+- If OIDC is enabled, store its client secret in the same secrets manager, register the exact `/api/auth/oidc/callback` URI, and test both SSO and the local break-glass login before removing bootstrap values.
 - Sign in once, then remove the five `BOOTSTRAP_*` values and recreate the container.
 - Keep `/app/data` on encrypted, access-controlled persistent storage and back up the database and uploads together.
 - Test the documented [backup and restore](docs/BACKUP_RESTORE.md) procedure before accepting real documents.
@@ -122,13 +134,15 @@ For upgrades, reverse proxy guidance, and SMTP configuration, follow [docs/DEPLO
 - Apply dependency and image updates, monitor disk space and health, and review audit events and approved exceptions.
 - Read [SECURITY.md](SECURITY.md) and the [threat model](docs/THREAT_MODEL.md) before exposing public uploads.
 
-OpenCOI v0.1 does not include SSO, MFA, antivirus/CDR, object storage, multi-replica coordination, a managed review service, or live insurer connectivity. Operators are responsible for deployment controls and domain review appropriate to their use case.
+OpenCOI supports one optional, environment-configured OpenID Connect provider bound to one explicit organization. It does not include MFA enforcement, SCIM, antivirus/CDR, object storage, multi-replica coordination, a managed review service, or live insurer connectivity. MFA policy remains the identity provider's responsibility. The published scale workload removes vendor-list query growth; it does not convert the bundled SQLite topology into horizontal scale.
 
-## API and exports
+## API, webhooks, and exports
 
 The React client uses a same-origin JSON API under `/api`. Authenticated mutations use the session cookie, trusted-origin checks, role checks, and a double-submit CSRF token. Public upload endpoints accept only a scoped upload-link token. `/api/health` is available for health checks.
 
-The API is an application interface, not yet a stable third-party contract: pre-1.0 endpoints may change with release notes. Compliance CSV is available from the vendor directory and honors its search and status filters. Exported statuses remain document-scoped, and untrusted cells are neutralized before spreadsheet use.
+Third-party integrations use the stable `/api/v1` surface with tenant-bound scoped bearer credentials. The app serves its OpenAPI 3.1 description at `/api/v1/openapi.json`. Writes are idempotent and vendor updates use ETag preconditions. Durable webhooks use stable event IDs, Standard Webhooks-compatible HMAC headers, public-HTTPS/SSRF controls, bounded retries, dead letters, and replay. See [API and webhook documentation](docs/API.md).
+
+Compliance CSV is available from the vendor directory and honors its search and status filters. Exported statuses remain document-scoped, and untrusted cells are neutralized before spreadsheet use.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component and trust boundaries.
 
@@ -137,6 +151,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component and trust boundar
 - [Architecture](docs/ARCHITECTURE.md)
 - [Rule and status semantics](docs/RULES.md)
 - [OCR and human review](docs/OCR_AND_REVIEW.md)
+- [API and webhooks](docs/API.md)
+- [Public extraction benchmark](benchmark/README.md) and [head-to-head status](benchmark/HEAD_TO_HEAD_STATUS.md)
+- [Accessibility](docs/ACCESSIBILITY.md) and [usability evidence kit](research/usability/README.md)
 - [Deployment](docs/DEPLOYMENT.md)
 - [Backup and restore](docs/BACKUP_RESTORE.md)
 - [Security policy](SECURITY.md) and [threat model](docs/THREAT_MODEL.md)

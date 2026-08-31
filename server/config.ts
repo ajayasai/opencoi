@@ -19,6 +19,18 @@ export interface SmtpConfig {
   from: string;
 }
 
+export type OidcClientAuthMethod = "client_secret_basic" | "client_secret_post";
+
+export interface OidcConfig {
+  issuer: string;
+  clientId: string;
+  clientSecret: string;
+  clientAuthMethod: OidcClientAuthMethod;
+  organizationSlug: string;
+  displayName: string;
+  transactionTtlMs: number;
+}
+
 export interface AppConfig {
   environment: RuntimeEnvironment;
   host: string;
@@ -35,6 +47,7 @@ export interface AppConfig {
   sessionCookieName: string;
   secureCookies: boolean;
   tokenPepper?: string;
+  oidc: OidcConfig | null;
   smtp: SmtpConfig | null;
   remindersEnabled: boolean;
   reminderPollMs: number;
@@ -188,6 +201,69 @@ const readSmtp = (environment: Environment): SmtpConfig | null => {
   };
 };
 
+const readOidc = (environment: Environment, runtime: RuntimeEnvironment): OidcConfig | null => {
+  const names = [
+    "OIDC_ISSUER",
+    "OIDC_CLIENT_ID",
+    "OIDC_CLIENT_SECRET",
+    "OIDC_ORGANIZATION_SLUG",
+  ] as const;
+  const configured = names.filter((name) => Boolean(environment[name]?.trim()));
+  if (configured.length === 0) {
+    return null;
+  }
+  if (configured.length !== names.length) {
+    throw new ConfigError(`${names.join(", ")} must be provided together`);
+  }
+
+  const issuerValue = readString(environment, "OIDC_ISSUER");
+  let issuer: URL;
+  try {
+    issuer = new URL(issuerValue);
+  } catch {
+    throw new ConfigError("OIDC_ISSUER must be an absolute URL");
+  }
+  const loopback = new Set(["localhost", "127.0.0.1", "[::1]"]).has(issuer.hostname);
+  if (
+    !["https:", "http:"].includes(issuer.protocol) ||
+    (issuer.protocol !== "https:" && (runtime === "production" || !loopback)) ||
+    issuer.username ||
+    issuer.password ||
+    issuer.search ||
+    issuer.hash
+  ) {
+    throw new ConfigError(
+      "OIDC_ISSUER must be an HTTPS issuer URL (loopback HTTP is allowed outside production)",
+    );
+  }
+
+  const organizationSlug = readString(environment, "OIDC_ORGANIZATION_SLUG").toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(organizationSlug)) {
+    throw new ConfigError("OIDC_ORGANIZATION_SLUG must be a valid lowercase organization slug");
+  }
+  const clientAuthMethod = readString(
+    environment,
+    "OIDC_CLIENT_AUTH_METHOD",
+    "client_secret_basic",
+  );
+  if (!new Set(["client_secret_basic", "client_secret_post"]).has(clientAuthMethod)) {
+    throw new ConfigError(
+      "OIDC_CLIENT_AUTH_METHOD must be client_secret_basic or client_secret_post",
+    );
+  }
+
+  return {
+    issuer: issuer.pathname === "/" ? issuer.origin : issuer.href,
+    clientId: readString(environment, "OIDC_CLIENT_ID"),
+    clientSecret: readString(environment, "OIDC_CLIENT_SECRET"),
+    clientAuthMethod: clientAuthMethod as OidcClientAuthMethod,
+    organizationSlug,
+    displayName: readString(environment, "OIDC_DISPLAY_NAME", "Single sign-on").slice(0, 80),
+    transactionTtlMs:
+      readInteger(environment, "OIDC_TRANSACTION_TTL_MINUTES", 10, 1, 15) * 60 * 1000,
+  };
+};
+
 /**
  * Parse and validate runtime configuration without mutating process.env.
  * Passing an explicit environment makes this deterministic in tests and CLIs.
@@ -254,6 +330,7 @@ export const loadConfig = (
     sessionCookieName: readString(environment, "SESSION_COOKIE_NAME", "opencoi_session"),
     secureCookies,
     tokenPepper,
+    oidc: readOidc(environment, environmentName),
     smtp: readSmtp(environment),
     remindersEnabled: readBoolean(environment, "REMINDERS_ENABLED", true),
     reminderPollMs: readInteger(environment, "REMINDER_POLL_MINUTES", 360, 1, 10_080) * 60 * 1000,

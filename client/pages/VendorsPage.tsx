@@ -12,6 +12,7 @@ import {
   PageLoader,
   Select,
   StatusBadge,
+  Textarea,
   TextInput,
 } from "../components/ui";
 import { useAuth } from "../state/AuthContext";
@@ -415,8 +416,7 @@ export function VendorsPage() {
             />
           </Field>
           <Field label="Internal notes" className="form-grid__wide">
-            <textarea
-              className="input"
+            <Textarea
               value={form.notes}
               onChange={(event) => updateForm("notes", event.target.value)}
               placeholder="Visible only to workspace users"

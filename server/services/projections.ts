@@ -280,6 +280,53 @@ export interface VendorFilters {
   document?: string;
 }
 
+interface VendorSummaryAggregateRow {
+  id: string;
+  legal_name: string;
+  trade_name: string | null;
+  contact_name: string | null;
+  contact_email: string | null;
+  external_reference: string | null;
+  vendor_status: VendorRow["status"];
+  vendor_type_id: string;
+  vendor_type_name: string;
+  vendor_updated_at: string;
+  certificate_id: string | null;
+  confirmation_status: string | null;
+  compliance_status: string | null;
+  certificate_updated_at: string | null;
+  certificate_effective_date: string | null;
+  certificate_expiration_date: string | null;
+  reminder_certificate_id: string | null;
+  reminder_expiration_date: string | null;
+  open_findings: number;
+  active_exceptions: number;
+  unexcepted_failures: number;
+  expiration_warning_days: number;
+}
+
+const aggregateCheckStatus = (row: VendorSummaryAggregateRow): CheckStatus => {
+  if (!row.certificate_id) return "not_submitted";
+  if (row.confirmation_status === "draft" || row.compliance_status === "pending_review") {
+    return "needs_review";
+  }
+  if (row.compliance_status === "compliant") return "meets";
+  if (row.compliance_status === "exception") return "approved_exception";
+  if (row.active_exceptions > 0 && row.unexcepted_failures === 0) return "approved_exception";
+  return "deficient";
+};
+
+const aggregateLifecycle = (row: VendorSummaryAggregateRow, today: string): LifecycleStatus => {
+  if (!row.certificate_id || !row.certificate_expiration_date) return "unknown";
+  if (row.certificate_effective_date && row.certificate_effective_date > today) return "future";
+  if (row.certificate_expiration_date < today) return "expired";
+  const warning = new Date(`${today}T00:00:00.000Z`);
+  warning.setUTCDate(warning.getUTCDate() + row.expiration_warning_days);
+  return row.certificate_expiration_date <= warning.toISOString().slice(0, 10)
+    ? "expiring"
+    : "current";
+};
+
 export const listVendorSummaryViews = (
   database: OpenCoiDatabase,
   repository: OrganizationRepository,
@@ -287,34 +334,157 @@ export const listVendorSummaryViews = (
   now = new Date(),
 ) => {
   const query = filters.q?.trim().toLowerCase();
-  return repository
-    .listVendors()
-    .map((vendor) => vendorSummaryView(database, repository, vendor, now))
-    .filter((vendor) => {
-      if (
-        query &&
-        ![
-          vendor.legalName,
-          vendor.dbaName,
-          vendor.contactName,
-          vendor.contactEmail,
-          vendor.externalReference,
-        ].some((value) => value?.toLowerCase().includes(query))
-      ) {
-        return false;
-      }
-      if (filters.type && filters.type !== "all" && vendor.vendorTypeId !== filters.type)
-        return false;
-      if (filters.check && filters.check !== "all" && vendor.status !== filters.check) return false;
-      if (
-        filters.document &&
-        filters.document !== "all" &&
-        vendor.lifecycleStatus !== filters.document
-      ) {
-        return false;
-      }
-      return true;
-    });
+  const at = now.toISOString();
+  const today = at.slice(0, 10);
+  const rows = database
+    .prepare(
+      `WITH ranked_certificates AS (
+         SELECT c.*, d.uploaded_at,
+                row_number() OVER (
+                  PARTITION BY c.organization_id, c.vendor_id
+                  ORDER BY d.uploaded_at DESC, c.id DESC
+                ) AS recent_rank,
+                CASE WHEN c.confirmation_status = 'confirmed' THEN
+                  row_number() OVER (
+                    PARTITION BY c.organization_id, c.vendor_id, c.confirmation_status
+                    ORDER BY d.uploaded_at DESC, c.id DESC
+                  )
+                END AS confirmed_rank
+         FROM certificates c
+         JOIN documents d ON d.organization_id = c.organization_id AND d.id = c.document_id
+         WHERE c.organization_id = ? AND c.confirmation_status <> 'rejected'
+       ),
+       latest AS (
+         SELECT * FROM ranked_certificates WHERE recent_rank = 1
+       ),
+       latest_confirmed AS (
+         SELECT * FROM ranked_certificates
+         WHERE confirmation_status = 'confirmed' AND confirmed_rank = 1
+       ),
+       policy_dates AS (
+         SELECT organization_id, certificate_id,
+                min(effective_date) AS effective_date,
+                min(expiration_date) AS expiration_date
+         FROM policies WHERE organization_id = ?
+         GROUP BY organization_id, certificate_id
+       ),
+       finding_counts AS (
+         SELECT f.organization_id, f.certificate_id,
+                sum(CASE WHEN f.status = 'open' AND f.evaluation_status IN ('FAIL', 'UNKNOWN')
+                         THEN 1 ELSE 0 END) AS open_findings,
+                sum(CASE WHEN f.status = 'open' AND f.evaluation_status = 'FAIL'
+                          AND NOT EXISTS (
+                            SELECT 1 FROM exceptions e
+                            WHERE e.organization_id = f.organization_id AND e.finding_id = f.id
+                              AND e.status = 'approved'
+                              AND (e.expires_at IS NULL OR e.expires_at >= ?)
+                          ) THEN 1 ELSE 0 END) AS unexcepted_failures
+         FROM findings f WHERE f.organization_id = ?
+         GROUP BY f.organization_id, f.certificate_id
+       ),
+       exception_counts AS (
+         SELECT e.organization_id, f.certificate_id, count(*) AS active_exceptions
+         FROM exceptions e
+         JOIN findings f ON f.organization_id = e.organization_id AND f.id = e.finding_id
+         WHERE e.organization_id = ? AND e.status = 'approved'
+           AND (e.expires_at IS NULL OR e.expires_at >= ?)
+         GROUP BY e.organization_id, f.certificate_id
+       ),
+       warning_days AS (
+         SELECT organization_id, vendor_type_id,
+                max(CASE
+                  WHEN coalesce(json_extract(rule_config_json, '$.required'), 1) <> 0
+                  THEN coalesce(json_extract(rule_config_json, '$.expirationWarningDays'), 30)
+                  ELSE 0
+                END) AS days
+         FROM coverage_requirements
+         WHERE organization_id = ? AND is_active = 1
+         GROUP BY organization_id, vendor_type_id
+       )
+       SELECT v.id, v.legal_name, v.trade_name, v.contact_name, v.contact_email,
+              v.external_reference, v.status AS vendor_status, v.vendor_type_id,
+              vt.name AS vendor_type_name, v.updated_at AS vendor_updated_at,
+              c.id AS certificate_id, c.confirmation_status, c.compliance_status,
+              c.updated_at AS certificate_updated_at,
+              coalesce(pd.effective_date, c.earliest_effective_date) AS certificate_effective_date,
+              coalesce(pd.expiration_date, c.earliest_expiration_date) AS certificate_expiration_date,
+              rc.id AS reminder_certificate_id,
+              coalesce(rpd.expiration_date, rc.earliest_expiration_date) AS reminder_expiration_date,
+              coalesce(fc.open_findings, 0) AS open_findings,
+              coalesce(ec.active_exceptions, 0) AS active_exceptions,
+              coalesce(fc.unexcepted_failures, 0) AS unexcepted_failures,
+              coalesce(wd.days, 30) AS expiration_warning_days
+       FROM vendors v
+       JOIN vendor_types vt
+         ON vt.organization_id = v.organization_id AND vt.id = v.vendor_type_id
+       LEFT JOIN latest c ON c.organization_id = v.organization_id AND c.vendor_id = v.id
+       LEFT JOIN policy_dates pd
+         ON pd.organization_id = c.organization_id AND pd.certificate_id = c.id
+       LEFT JOIN latest_confirmed rc
+         ON rc.organization_id = v.organization_id AND rc.vendor_id = v.id
+       LEFT JOIN policy_dates rpd
+         ON rpd.organization_id = rc.organization_id AND rpd.certificate_id = rc.id
+       LEFT JOIN finding_counts fc
+         ON fc.organization_id = c.organization_id AND fc.certificate_id = c.id
+       LEFT JOIN exception_counts ec
+         ON ec.organization_id = c.organization_id AND ec.certificate_id = c.id
+       LEFT JOIN warning_days wd
+         ON wd.organization_id = v.organization_id AND wd.vendor_type_id = v.vendor_type_id
+       WHERE v.organization_id = ?
+         AND (? IS NULL OR v.vendor_type_id = ?)
+         AND (
+           ? IS NULL OR instr(lower(v.legal_name), ?) > 0 OR
+           instr(lower(coalesce(v.trade_name, '')), ?) > 0 OR
+           instr(lower(coalesce(v.contact_name, '')), ?) > 0 OR
+           instr(lower(coalesce(v.contact_email, '')), ?) > 0 OR
+           instr(lower(coalesce(v.external_reference, '')), ?) > 0
+         )
+       ORDER BY v.legal_name COLLATE NOCASE, v.id`,
+    )
+    .all(
+      repository.organizationId,
+      repository.organizationId,
+      at,
+      repository.organizationId,
+      repository.organizationId,
+      at,
+      repository.organizationId,
+      repository.organizationId,
+      filters.type && filters.type !== "all" ? filters.type : null,
+      filters.type && filters.type !== "all" ? filters.type : null,
+      query ?? null,
+      query ?? "",
+      query ?? "",
+      query ?? "",
+      query ?? "",
+      query ?? "",
+    ) as unknown as VendorSummaryAggregateRow[];
+  return rows
+    .map((row) => ({
+      id: row.id,
+      legalName: row.legal_name,
+      dbaName: row.trade_name,
+      contactName: row.contact_name,
+      contactEmail: row.contact_email ?? "",
+      vendorTypeId: row.vendor_type_id,
+      vendorTypeName: row.vendor_type_name,
+      externalReference: row.external_reference,
+      status: aggregateCheckStatus(row),
+      lifecycleStatus: aggregateLifecycle(row, today),
+      nextExpiration: row.certificate_expiration_date,
+      reminderExpiration: row.reminder_expiration_date,
+      expirationWarningDays: row.expiration_warning_days,
+      reminderEligible: row.vendor_status === "active" && row.reminder_expiration_date !== null,
+      openFindings: row.open_findings,
+      updatedAt: row.certificate_updated_at ?? row.vendor_updated_at,
+    }))
+    .filter(
+      (vendor) =>
+        (!filters.check || filters.check === "all" || vendor.status === filters.check) &&
+        (!filters.document ||
+          filters.document === "all" ||
+          vendor.lifecycleStatus === filters.document),
+    );
 };
 
 const findingView = (
@@ -416,6 +586,17 @@ export const certificateView = (
   const policies = repository.listPolicies(row.id);
   const extraction = parseJson<{
     certificateHolder?: string | null;
+    provenance?: Array<{
+      field?: string;
+      extractedValue?: string | number;
+      policyIndex?: number;
+      endorsementIndex?: number;
+      limitType?: string;
+      source?: "OCR";
+      confidenceBps?: number;
+      rawText?: string;
+      page?: number;
+    }>;
     _opencoi?: {
       evaluationDate?: string;
       requirementVersion?: number | null;
@@ -426,6 +607,31 @@ export const certificateView = (
       };
     };
   }>(row.extraction_json, {});
+  const evidence = (extraction.provenance ?? [])
+    .filter(
+      (citation) =>
+        typeof citation.field === "string" &&
+        citation.source === "OCR" &&
+        typeof citation.rawText === "string" &&
+        citation.rawText.length > 0 &&
+        Number.isSafeInteger(citation.page) &&
+        Number(citation.page) > 0,
+    )
+    .map((citation) => ({
+      field: citation.field as string,
+      extractedValue: citation.extractedValue ?? "",
+      policyIndex: citation.policyIndex ?? null,
+      endorsementIndex: citation.endorsementIndex ?? null,
+      limitType: citation.limitType ?? null,
+      confidenceBps: citation.confidenceBps ?? null,
+      rawText: citation.rawText as string,
+      page: citation.page as number,
+      origin: "client_submitted_extraction" as const,
+      attestationStatus:
+        row.confirmation_status === "confirmed"
+          ? ("reviewer_attested" as const)
+          : ("unverified" as const),
+    }));
   const vendor = repository.getVendor(row.vendor_id);
   const lifecycleStatus = lifecycleFor(
     row,
@@ -460,6 +666,7 @@ export const certificateView = (
     requirementVersion: extraction._opencoi?.requirementVersion ?? null,
     evaluationDate: extraction._opencoi?.evaluationDate ?? null,
     reviewDecision: extraction._opencoi?.reviewDecision ?? null,
+    evidence,
     policies: policies.map(policyView),
     findings: repository
       .listFindings(row.id)
