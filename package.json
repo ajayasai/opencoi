@@ -58,7 +58,7 @@
     "helmet": "^8.1.0",
     "lucide-react": "^1.37.0",
     "multer": "^2.0.2",
-    "nodemailer": "^9.0.6",
+    "nodemailer": "^10.0.9",
     "openid-client": "6.8.7",
     "pdfjs-dist": "^6.2.108",
     "react": "^19.2.8",
